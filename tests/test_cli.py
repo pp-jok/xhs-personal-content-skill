@@ -79,6 +79,170 @@ class CliTests(unittest.TestCase):
             self.assertEqual(output["result"]["publish_task_id"], "publish-task-from-benchmark-post-001-1")
             self.assertTrue((data_dir / "publish-tasks" / "publish-task-from-benchmark-post-001-1.json").exists())
 
+    def test_init_workspace_creates_expected_local_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = self._run_cli(["init-workspace", "--workspace", temp_dir])
+
+            self.assertTrue(output["ok"])
+            self.assertEqual(output["result"]["workspace"], temp_dir)
+            self.assertTrue((Path(temp_dir) / "reports").exists())
+            self.assertTrue((Path(temp_dir) / "creator-profiles").exists())
+            self.assertIn("creator_profile.json", output["result"]["missing_required_files"])
+
+    def test_upsert_profile_writes_single_file_and_collection_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "profile-input.json"
+            source.write_text(
+                json.dumps(
+                    {
+                        "id": "creator-main",
+                        "name": "测试账号",
+                        "platform": "小红书",
+                        "positioning": "职场新人表达成长",
+                        "target_audience": ["职场新人"],
+                        "content_style": ["真实", "具体"],
+                        "forbidden_expressions": ["夸张承诺"],
+                        "goals": ["提升收藏"],
+                        "content_formats": ["图文"],
+                        "publish_frequency": "每周 3 篇",
+                        "notes": "测试资料。",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            output = self._run_cli(["upsert-profile", "--workspace", temp_dir, "--file", str(source)])
+
+            self.assertTrue(output["ok"])
+            self.assertEqual(output["result"]["id"], "creator-main")
+            self.assertTrue((Path(temp_dir) / "creator_profile.json").exists())
+            self.assertTrue((Path(temp_dir) / "creator-profiles" / "creator-main.json").exists())
+
+    def test_add_benchmark_account_and_post_merge_root_lists_by_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            account_file = Path(temp_dir) / "account.json"
+            post_file = Path(temp_dir) / "post.json"
+            account_file.write_text(
+                json.dumps(
+                    {
+                        "id": "benchmark-account-001",
+                        "name": "对标账号",
+                        "url": "",
+                        "niche": "职场表达",
+                        "reason_to_follow": "场景具体。",
+                        "learnable_points": ["场景开头"],
+                        "non_learnable_points": ["标题略焦虑"],
+                        "tags": ["tag-usage-topic"],
+                        "summary": "适合学习表达结构。",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            post_file.write_text(
+                json.dumps(
+                    {
+                        "id": "benchmark-post-001",
+                        "account_id": "benchmark-account-001",
+                        "title": "汇报如何说清楚",
+                        "url": "",
+                        "content_type": "图文",
+                        "cover_text": "汇报先讲结论",
+                        "raw_content": "先说结论，再说卡点，最后说下一步。",
+                        "metrics": {"likes": 10, "comments": 1, "saves": 5},
+                        "tags": ["tag-usage-topic"],
+                        "ai_analysis": {},
+                        "borrowable_points": ["三句结构"],
+                        "non_borrowable_points": ["不要制造焦虑"],
+                        "rule_card_candidates": [{"name": "三句结构", "type": "structure", "summary": "先结论后过程。"}],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            account_output = self._run_cli(["add-benchmark-account", "--workspace", temp_dir, "--file", str(account_file)])
+            post_output = self._run_cli(["add-benchmark-post", "--workspace", temp_dir, "--file", str(post_file)])
+            account_repeat = self._run_cli(["add-benchmark-account", "--workspace", temp_dir, "--file", str(account_file)])
+
+            accounts = json.loads((Path(temp_dir) / "benchmark_account.json").read_text(encoding="utf-8"))
+            posts = json.loads((Path(temp_dir) / "benchmark_post.json").read_text(encoding="utf-8"))
+            self.assertTrue(account_output["ok"])
+            self.assertTrue(post_output["ok"])
+            self.assertEqual(account_repeat["result"]["total"], 1)
+            self.assertEqual(len(accounts), 1)
+            self.assertEqual(len(posts), 1)
+            self.assertTrue((Path(temp_dir) / "benchmark-posts" / "benchmark-post-001.json").exists())
+
+    def test_add_feedback_appends_issues_and_validate_workspace_reports_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            feedback_file = Path(temp_dir) / "feedback.json"
+            feedback_file.write_text(
+                json.dumps(
+                    {
+                        "reviewer": "测试者",
+                        "reviewed_at": "2026-07-04",
+                        "overall_notes": "标题太 AI。",
+                        "issues": [
+                            {
+                                "step": "title",
+                                "problem": "像模板。",
+                                "suggestion": "改成真人经验口吻。",
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            feedback_output = self._run_cli(["add-feedback", "--workspace", temp_dir, "--file", str(feedback_file)])
+            validation_output = self._run_cli(["validate-workspace", "--workspace", temp_dir])
+
+            self.assertTrue(feedback_output["ok"])
+            self.assertEqual(feedback_output["result"]["issue_count"], 1)
+            self.assertFalse(validation_output["result"]["ready_for_real_sample_validation"])
+            self.assertIn("creator_profile.json", validation_output["result"]["missing_required_files"])
+
+    def test_add_custom_tags_merges_root_list_and_collection_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tag_file = Path(temp_dir) / "tags.json"
+            tag_file.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "tag-usage-topic",
+                            "name": "适合选题",
+                            "type": "usage",
+                            "description": "用于选题。",
+                            "scope": ["benchmark_post", "rule_card", "topic_item"],
+                            "weight": 4,
+                        },
+                        {
+                            "id": "tag-risk-ai",
+                            "name": "避免 AI 感",
+                            "type": "risk",
+                            "description": "避免模板化表达。",
+                            "scope": ["content_draft", "rule_card"],
+                            "weight": 5,
+                        },
+                    ],
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            output = self._run_cli(["add-custom-tags", "--workspace", temp_dir, "--file", str(tag_file)])
+            repeat = self._run_cli(["add-custom-tags", "--workspace", temp_dir, "--file", str(tag_file)])
+
+            tags = json.loads((Path(temp_dir) / "custom_tags.json").read_text(encoding="utf-8"))
+            self.assertTrue(output["ok"])
+            self.assertEqual(output["result"]["total"], 2)
+            self.assertEqual(repeat["result"]["total"], 2)
+            self.assertEqual(len(tags), 2)
+            self.assertTrue((Path(temp_dir) / "custom-tags" / "tag-risk-ai.json").exists())
+
     def _run_cli(self, args: list[str], expected_code: int = 0) -> dict:
         buffer = StringIO()
         with redirect_stdout(buffer):

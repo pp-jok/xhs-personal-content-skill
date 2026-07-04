@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from app.models.core import MODEL_TYPES, BaseModel
+from app.models.core import MODEL_TYPES, BaseModel, BenchmarkAccount, BenchmarkPost, CreatorProfile, CustomTag
 from app.repositories import JsonRepository
 from app.services.real_sample_validation import RealSampleValidator
 from app.workflows import BenchmarkToPublishWorkflow
@@ -15,6 +15,7 @@ from app.workflows import BenchmarkToPublishWorkflow
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_PROMPTS_DIR = PROJECT_ROOT / "prompts"
+REQUIRED_WORKSPACE_FILES = ("creator_profile.json", "benchmark_account.json", "benchmark_post.json", "custom_tags.json")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -62,6 +63,42 @@ def build_parser() -> argparse.ArgumentParser:
     validation_parser = subparsers.add_parser("validate-real-sample", help="Run Phase 6 real sample validation.")
     validation_parser.add_argument("--workspace", required=True, help="Real sample workspace directory.")
     validation_parser.set_defaults(handler=handle_validate_real_sample)
+
+    init_parser = subparsers.add_parser("init-workspace", help="Initialize a local account operation workspace.")
+    init_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    init_parser.set_defaults(handler=handle_init_workspace)
+
+    profile_parser = subparsers.add_parser("upsert-profile", help="Upsert a creator profile into a workspace.")
+    profile_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    profile_parser.add_argument("--file", required=True, help="Creator profile JSON file.")
+    profile_parser.set_defaults(handler=handle_upsert_profile)
+
+    account_parser = subparsers.add_parser("add-benchmark-account", help="Add or update benchmark account data.")
+    account_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    account_parser.add_argument("--file", required=True, help="Benchmark account JSON file.")
+    account_parser.set_defaults(handler=handle_add_benchmark_account)
+
+    post_parser = subparsers.add_parser("add-benchmark-post", help="Add or update benchmark post data.")
+    post_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    post_parser.add_argument("--file", required=True, help="Benchmark post JSON file.")
+    post_parser.set_defaults(handler=handle_add_benchmark_post)
+
+    tags_parser = subparsers.add_parser("add-custom-tags", help="Add or update custom tags.")
+    tags_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    tags_parser.add_argument("--file", required=True, help="Custom tags JSON file.")
+    tags_parser.set_defaults(handler=handle_add_custom_tags)
+
+    feedback_parser = subparsers.add_parser("add-feedback", help="Append user feedback to workspace validation feedback.")
+    feedback_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    feedback_parser.add_argument("--file", required=True, help="Validation feedback JSON file.")
+    feedback_parser.set_defaults(handler=handle_add_feedback)
+
+    workspace_validation_parser = subparsers.add_parser(
+        "validate-workspace",
+        help="Validate whether a workspace has the minimum files needed for real sample validation.",
+    )
+    workspace_validation_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    workspace_validation_parser.set_defaults(handler=handle_validate_workspace)
 
     return parser
 
@@ -111,12 +148,167 @@ def handle_validate_real_sample(args: argparse.Namespace) -> dict[str, Any]:
     return validator.run().to_dict()
 
 
+def handle_init_workspace(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    return workspace_status(workspace)
+
+
+def handle_upsert_profile(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    data = read_json_object(Path(args.file), "creator profile")
+    profile = CreatorProfile.from_dict(data)
+    JsonRepository(workspace, CreatorProfile).upsert(profile)
+    write_json(workspace / "creator_profile.json", profile.to_dict())
+    status = workspace_status(workspace)
+    return {"id": profile.id, "workspace": str(workspace), "missing_required_files": status["missing_required_files"]}
+
+
+def handle_add_benchmark_account(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    items = read_json_items(Path(args.file), "benchmark account")
+    repo = JsonRepository(workspace, BenchmarkAccount)
+    saved = [repo.upsert(BenchmarkAccount.from_dict(item)) for item in items]
+    root_items = merge_root_items(workspace / "benchmark_account.json", [item.to_dict() for item in saved])
+    return {"ids": [item.id for item in saved], "total": len(root_items), "workspace": str(workspace)}
+
+
+def handle_add_benchmark_post(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    items = read_json_items(Path(args.file), "benchmark post")
+    repo = JsonRepository(workspace, BenchmarkPost)
+    saved = [repo.upsert(BenchmarkPost.from_dict(item)) for item in items]
+    root_items = merge_root_items(workspace / "benchmark_post.json", [item.to_dict() for item in saved])
+    return {"ids": [item.id for item in saved], "total": len(root_items), "workspace": str(workspace)}
+
+
+def handle_add_custom_tags(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    items = read_json_items(Path(args.file), "custom tags")
+    repo = JsonRepository(workspace, CustomTag)
+    saved = [repo.upsert(CustomTag.from_dict(item)) for item in items]
+    root_items = merge_root_items(workspace / "custom_tags.json", [item.to_dict() for item in saved])
+    return {"ids": [item.id for item in saved], "total": len(root_items), "workspace": str(workspace)}
+
+
+def handle_add_feedback(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    incoming = read_json_object(Path(args.file), "validation feedback")
+    issues = incoming.get("issues", [])
+    if not isinstance(issues, list):
+        raise ValueError("feedback issues must be a list")
+
+    target = workspace / "validation_feedback.json"
+    if target.exists():
+        existing = read_json_object(target, "validation feedback")
+        existing_issues = existing.get("issues", [])
+        if not isinstance(existing_issues, list):
+            raise ValueError("existing feedback issues must be a list")
+        existing["issues"] = existing_issues + issues
+        if incoming.get("overall_notes"):
+            current_notes = existing.get("overall_notes", "")
+            separator = "\n" if current_notes else ""
+            existing["overall_notes"] = f"{current_notes}{separator}{incoming['overall_notes']}"
+        merged = existing
+    else:
+        merged = incoming
+
+    write_json(target, merged)
+    return {"workspace": str(workspace), "issue_count": len(merged.get("issues", []))}
+
+
+def handle_validate_workspace(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    return workspace_status(workspace)
+
+
 def get_model_type(collection: str) -> type[BaseModel]:
     return MODEL_TYPES[collection]
 
 
 def print_json(data: Any) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def ensure_workspace_dirs(workspace: Path) -> None:
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "reports").mkdir(exist_ok=True)
+    for model_type in MODEL_TYPES.values():
+        (workspace / model_type.collection_name).mkdir(exist_ok=True)
+
+
+def read_json_object(path: Path, label: str) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as file:
+        data = json.load(file)
+    if not isinstance(data, dict):
+        raise ValueError(f"{label} file must contain a JSON object")
+    return data
+
+
+def read_json_items(path: Path, label: str) -> list[dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as file:
+        data = json.load(file)
+    if isinstance(data, dict):
+        return [data]
+    if isinstance(data, list) and all(isinstance(item, dict) for item in data):
+        return data
+    raise ValueError(f"{label} file must contain a JSON object or a list of objects")
+
+
+def write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def merge_root_items(path: Path, incoming_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    existing_items: list[dict[str, Any]]
+    if path.exists():
+        existing_items = read_json_items(path, path.name)
+    else:
+        existing_items = []
+
+    merged_by_id = {item["id"]: item for item in existing_items if isinstance(item.get("id"), str)}
+    for item in incoming_items:
+        merged_by_id[item["id"]] = item
+    merged = list(merged_by_id.values())
+    write_json(path, merged)
+    return merged
+
+
+def workspace_status(workspace: Path) -> dict[str, Any]:
+    missing = [file_name for file_name in REQUIRED_WORKSPACE_FILES if not (workspace / file_name).exists()]
+    counts = {
+        "benchmark_accounts": count_json_items(workspace / "benchmark_account.json"),
+        "benchmark_posts": count_json_items(workspace / "benchmark_post.json"),
+        "custom_tags": count_json_items(workspace / "custom_tags.json"),
+        "feedback_issues": count_feedback_issues(workspace / "validation_feedback.json"),
+    }
+    return {
+        "workspace": str(workspace),
+        "ready_for_real_sample_validation": not missing,
+        "missing_required_files": missing,
+        "counts": counts,
+    }
+
+
+def count_json_items(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return len(read_json_items(path, path.name))
+
+
+def count_feedback_issues(path: Path) -> int:
+    if not path.exists():
+        return 0
+    data = read_json_object(path, path.name)
+    issues = data.get("issues", [])
+    return len(issues) if isinstance(issues, list) else 0
 
 
 if __name__ == "__main__":

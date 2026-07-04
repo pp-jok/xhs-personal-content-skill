@@ -172,6 +172,14 @@ Docs for details:
 
 ## Triggered Conversation Workflows
 
+For all workflows below:
+
+- Read relevant project-local files before deciding what to do.
+- Prefer the CLI write commands when available, then summarize in user-facing language.
+- If the user gives partial information, save valid information first and mark missing information in the reply.
+- Do not invent missing platform metrics, account facts, or user reasons.
+- Hide paths, commands, and JSON names unless the user asks for technical details.
+
 ### 1. 录入或更新账号档案
 
 Trigger examples:
@@ -181,10 +189,12 @@ Trigger examples:
 
 Action:
 
-1. Extract `CreatorProfile` fields from the user message.
-2. Ask at most 3 clarifying questions only if required fields are missing.
-3. Write or update `<project-local-workspace>/creator_profile.json` silently.
-4. Tell the user what has been saved, what is still thin, and the next best input. Do not mention file paths unless requested.
+1. Read existing account profile if present.
+2. Extract: account name, positioning, target audience, style, forbidden expressions, goals, formats, publish frequency, notes.
+3. Preserve existing fields when the user only updates part of the profile.
+4. Use `upsert-profile` when writing a structured profile payload.
+5. If positioning, target audience, style, or goal is missing, ask at most 3 questions.
+6. Reply with: saved account understanding, missing information, next best sample to provide.
 
 ### 2. 添加对标账号
 
@@ -195,10 +205,11 @@ Trigger examples:
 
 Action:
 
-1. Extract account name, URL, niche, reason to follow, learnable points, non-learnable points, tags, and summary.
-2. If only a link is provided, ask the user for why this account is worth learning unless already inferable from surrounding context.
-3. Write or update `<project-local-workspace>/benchmark_account.json` silently.
-4. Summarize what this account is useful for learning and what should not be copied.
+1. Read current account profile and existing benchmark accounts.
+2. Extract: account name, URL if provided, niche, user reason, learnable points, non-learnable points, tags, summary.
+3. If only a link/name is provided, ask why it is worth learning before treating it as a strong benchmark.
+4. Use `add-benchmark-account` when writing structured account data.
+5. Reply with: what this account is useful for, what not to copy, and what kind of post to collect next.
 
 ### 3. 添加对标帖子
 
@@ -210,11 +221,12 @@ Trigger examples:
 
 Action:
 
-1. Extract title, cover text, raw content, visible metrics, tags, and source account.
-2. When the user provides an image, inspect it and transcribe only visible content. Do not invent missing text or metrics.
-3. Write or update `<project-local-workspace>/benchmark_post.json` silently.
-4. If account info is available, also update `benchmark_account.json`.
-5. Explain the learnable angle, non-learnable risk, and one next tuning question.
+1. Read account profile, tags, existing benchmark accounts/posts, and user preference feedback.
+2. Extract: title, cover text, raw content, content type, visible metrics, source account, user-stated reason, borrowable points, non-borrowable points, rule candidates.
+3. When the user provides an image, inspect it and transcribe only visible content. Do not invent missing text or metrics.
+4. If the source account is new and enough information exists, also add/update the benchmark account.
+5. Use `add-benchmark-post` when writing structured post data.
+6. Reply with: learned angle, risk, possible rule, and one guided question such as “你更想学标题、选题、封面还是脚本？”
 
 ### 4. 运行真实样本验证
 
@@ -241,6 +253,8 @@ Then read and summarize:
 
 In the normal reply, hide command output and file paths. Present a short validation summary and next action list.
 
+Before full validation, use `validate-workspace` to check whether minimum inputs exist. If required inputs are missing, explain the missing business information instead of showing file names.
+
 ### 5. 生成选题 / 草稿 / 发布任务
 
 Trigger examples:
@@ -251,7 +265,18 @@ Trigger examples:
 
 Action:
 
-Use stored account profile, tags, benchmark posts, and rule cards. Prefer accumulated rules over one-off generic advice. In normal user-facing replies, do not mention `MockPromptService`; instead say whether the output is “适合人工试改” or “还需要更多样本支撑”. Mention technical generation limits only when the user asks for technical details.
+1. Read account profile, custom tags, rule cards, benchmark posts, validation feedback, and recent own posts if present.
+2. Generate topics directly with Codex from this local context; do not rely on CLI mock output for final quality.
+3. For each topic include: title, goal, format, source rule/sample, why it fits the account, risk to watch.
+4. Prefer 5-10 topics when the user does not specify a count.
+5. Reply with the topic list and ask which one to expand into a draft.
+
+For drafts:
+
+1. Read the chosen topic, relevant rules, forbidden expressions, and feedback.
+2. Produce title options, cover copy, script/body, simple shots, quality notes, and risk checks.
+3. Avoid forbidden expressions and generic content advice.
+4. Say whether the draft is ready to try, needs human edits, or needs more samples.
 
 ### 6. 更新偏好和规则
 
@@ -264,10 +289,13 @@ Trigger examples:
 
 Action:
 
-1. Convert user feedback into tags, rule-card notes, or `validation_feedback.json` issues.
-2. Preserve the original source and reason.
-3. Prefer updating existing rules over creating duplicates.
-4. Confirm the enduring preference in plain language and say how it will affect future output.
+1. Read existing feedback, tags, and rule cards.
+2. Extract the target: title, cover, script, topic, tone, boundary, or published result.
+3. Extract polarity: keep, avoid, revise, strengthen, or test later.
+4. Convert the feedback into a durable preference, risk, or rule-card note.
+5. Use `add-feedback` for structured feedback capture.
+6. Prefer updating existing rules over creating duplicates.
+7. Reply with the enduring rule and how it will affect future output.
 
 ### 7. 复盘已发布内容
 
@@ -278,9 +306,42 @@ Trigger examples:
 
 Action:
 
-1. Record `OwnPost` and `ReviewRecord` data.
-2. Extract lessons, next actions, and rule updates.
-3. Keep future generation tied to the creator profile and rule cards.
+1. Read account profile, publish task if present, existing rules, and previous feedback.
+2. Extract post title, published time, metrics, content goal, user judgment, what worked, what failed.
+3. Record own post and review information when structured data is available.
+4. Convert lessons into rule updates or feedback issues.
+5. Reply with: what to keep, what to avoid next time, which rule changed, and next content suggestion.
+
+### 8. 初始化账号工作区
+
+Trigger examples:
+
+- “初始化这个项目的账号工作区”
+- “开始使用这个 Skill”
+- “帮我建一个账号运营工作区”
+
+Action:
+
+1. Use `init-workspace` for the project-local workspace.
+2. Do not mention directories in the normal reply.
+3. Ask the user for the five account foundation fields: positioning, target audience, style, forbidden expressions, near-term goal.
+4. If the user already provided some of these fields, save them first and ask only for the missing parts.
+
+### 9. 创建发布任务
+
+Trigger examples:
+
+- “创建发布任务”
+- “把这个草稿加入发布计划”
+- “安排这篇什么时候发”
+
+Action:
+
+1. Read account profile, selected draft, weekly plan, and publish tasks.
+2. Extract planned publish time, content goal, needed materials, and status.
+3. If publish time is missing, suggest the nearest reasonable slot from the weekly plan.
+4. Do not auto-publish or imply the content has been published.
+5. Reply with: planned time, content goal, materials to confirm, and review reminder.
 
 ## Hidden Technical Work
 

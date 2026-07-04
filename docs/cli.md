@@ -4,7 +4,11 @@
 
 Phase 4 提供一个轻量命令行入口，用于手动导入 JSON、查看本地记录和运行本地工作流。
 
+Phase 7 增加面向 Codex 操作流程的工作区命令。Codex 负责理解用户输入和生成内容，CLI 负责稳定写入、合并、校验和报告。
+
 CLI 只读写本地 JSON 文件，不抓取外部内容，不调用真实模型 API，不自动发布。
+
+CLI 不替代 Codex 做高质量生成。`run-workflow` 和 `validate-real-sample` 中的生成链路仍主要用于本地流程验证。
 
 ## 运行方式
 
@@ -42,6 +46,79 @@ python3 -m app.cli.main list creator-profiles
 ```bash
 python3 -m app.cli.main show creator-profiles creator-main
 ```
+
+## 初始化账号工作区
+
+```bash
+python3 -m app.cli.main init-workspace --workspace .xhs-personal-content-skill/real-sample
+```
+
+该命令会创建本地工作区目录、模型集合目录和报告目录，并返回缺失的必需样本。
+
+## 写入或更新账号档案
+
+```bash
+python3 -m app.cli.main upsert-profile \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --file /path/to/creator_profile.json
+```
+
+写入结果：
+
+- 更新工作区单文件账号档案。
+- 同步更新集合目录中的账号记录。
+
+## 添加对标账号
+
+```bash
+python3 -m app.cli.main add-benchmark-account \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --file /path/to/benchmark_account.json
+```
+
+输入文件可以是一个 JSON 对象，也可以是对象数组。相同 `id` 会更新，不会重复追加。
+
+## 添加对标帖子
+
+```bash
+python3 -m app.cli.main add-benchmark-post \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --file /path/to/benchmark_post.json
+```
+
+输入文件可以是一个 JSON 对象，也可以是对象数组。命令会校验字段并同步写入集合目录。
+
+## 添加自定义标签
+
+```bash
+python3 -m app.cli.main add-custom-tags \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --file /path/to/custom_tags.json
+```
+
+输入文件可以是一个 JSON 对象，也可以是对象数组。相同 `id` 会更新，不会重复追加。
+
+## 记录用户反馈
+
+```bash
+python3 -m app.cli.main add-feedback \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --file /path/to/validation_feedback.json
+```
+
+该命令会把新的 `issues` 追加到现有反馈中，适合记录“标题太 AI”“封面可以”“以后不要这样写”等用户偏好。
+
+## 校验工作区
+
+```bash
+python3 -m app.cli.main validate-workspace --workspace .xhs-personal-content-skill/real-sample
+```
+
+输出包含：
+
+- 是否满足真实样本验证的最低输入要求。
+- 缺失的必需样本。
+- 对标账号、对标帖子、标签和反馈问题数量。
 
 ## 运行本地工作流
 
