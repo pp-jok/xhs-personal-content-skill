@@ -1,0 +1,14 @@
+{
+  "id": "publish-task-001",
+  "created_at": "2026-07-02T00:00:00Z",
+  "updated_at": "2026-07-02T00:00:00Z",
+  "account_id": "creator-main",
+  "draft_id": "draft-001",
+  "planned_publish_time": "2026-07-05T20:00:00+08:00",
+  "content_goal": "增加收藏",
+  "status": "planned",
+  "materials_needed": ["计划表截图", "封面文案确认"],
+  "result_metrics": {},
+  "review_summary": "",
+  "tags": ["tag-usage-topic"]
+}

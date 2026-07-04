@@ -1,0 +1,90 @@
+{
+  "id": "analyze_benchmark_post",
+  "purpose": "分析单篇对标帖子，输出结构化分析、可借鉴点、不可借鉴点和规则卡片候选。",
+  "input_schema": {
+    "type": "object",
+    "required": ["creator_profile", "benchmark_post", "custom_tags"],
+    "properties": {
+      "creator_profile": {
+        "type": "object",
+        "required": ["id", "positioning", "target_audience", "content_style", "forbidden_expressions"],
+        "properties": {
+          "id": {"type": "string"},
+          "positioning": {"type": "string"},
+          "target_audience": {"type": "array", "items": {"type": "string"}},
+          "content_style": {"type": "array", "items": {"type": "string"}},
+          "forbidden_expressions": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "benchmark_post": {
+        "type": "object",
+        "required": ["id", "title", "content_type", "raw_content", "tags"],
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "content_type": {"type": "string"},
+          "raw_content": {"type": "string"},
+          "tags": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "custom_tags": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "name", "type"],
+          "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "type": {"type": "string"}
+          }
+        }
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["ai_analysis", "borrowable_points", "non_borrowable_points", "rule_card_candidates", "warnings"],
+    "properties": {
+      "ai_analysis": {
+        "type": "object",
+        "required": ["hook", "structure", "audience_fit", "style_fit"],
+        "properties": {
+          "hook": {"type": "string"},
+          "structure": {"type": "string"},
+          "audience_fit": {"type": "string"},
+          "style_fit": {"type": "string"}
+        }
+      },
+      "borrowable_points": {"type": "array", "items": {"type": "string"}},
+      "non_borrowable_points": {"type": "array", "items": {"type": "string"}},
+      "rule_card_candidates": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "type", "summary"],
+          "properties": {
+            "name": {"type": "string"},
+            "type": {"type": "string"},
+            "summary": {"type": "string"}
+          }
+        }
+      },
+      "warnings": {"type": "array", "items": {"type": "string"}}
+    }
+  },
+  "constraints": [
+    "只能围绕当前创作者账号档案分析，不输出通用内容建议。",
+    "不得引入外部竞品或品牌名称。",
+    "必须区分可借鉴点和不可借鉴点。",
+    "输出必须是可解析 JSON。"
+  ],
+  "quality_standards": [
+    "分析结论必须能追溯到输入帖子内容。",
+    "规则卡片候选必须能转化为 RuleCard。",
+    "风险提醒必须引用当前账号禁用表达或风格边界。"
+  ],
+  "failure_handling": {
+    "on_missing_input": "返回 warnings，指出缺失字段，不编造分析。",
+    "on_low_confidence": "降低结论强度，并在 warnings 中说明需要人工补充素材。"
+  }
+}

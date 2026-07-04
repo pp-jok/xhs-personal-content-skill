@@ -1,0 +1,11 @@
+{
+  "id": "benchmark-account-001",
+  "name": "填写对标账号名称",
+  "url": "",
+  "niche": "填写账号领域",
+  "reason_to_follow": "说明为什么对标这个账号。",
+  "learnable_points": ["可学习点 1", "可学习点 2"],
+  "non_learnable_points": ["不适合直接学习的点"],
+  "tags": ["tag-usage-topic"],
+  "summary": "用 1 到 3 句话概括这个账号值得学习的地方。"
+}

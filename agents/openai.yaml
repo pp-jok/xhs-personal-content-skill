@@ -1,0 +1,6 @@
+interface:
+  display_name: "小红书账号运营"
+  short_description: "管理单个小红书账号的对标、规则、选题和草稿"
+  default_prompt: "Use $xhs-personal-content-skill to add this benchmark post and update my account rules."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,12 @@
+{
+  "reviewer": "填写评价人",
+  "reviewed_at": "2026-07-02",
+  "overall_notes": "填写整体感受。",
+  "issues": [
+    {
+      "step": "topic",
+      "problem": "填写发现的问题。",
+      "suggestion": "填写下一轮建议。"
+    }
+  ]
+}

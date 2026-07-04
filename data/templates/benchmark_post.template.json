@@ -1,0 +1,19 @@
+{
+  "id": "benchmark-post-001",
+  "account_id": "benchmark-account-001",
+  "title": "填写对标帖子标题",
+  "url": "",
+  "content_type": "图文",
+  "cover_text": "填写封面文字",
+  "raw_content": "粘贴或整理帖子正文、脚本或主要内容。",
+  "metrics": {
+    "likes": 0,
+    "comments": 0,
+    "saves": 0
+  },
+  "tags": ["tag-usage-topic"],
+  "ai_analysis": {},
+  "borrowable_points": [],
+  "non_borrowable_points": [],
+  "rule_card_candidates": []
+}

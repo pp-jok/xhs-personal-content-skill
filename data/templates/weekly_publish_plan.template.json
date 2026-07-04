@@ -1,0 +1,13 @@
+{
+  "week_start": "2026-07-06",
+  "account_id": "creator-main",
+  "planned_publish_time": "2026-07-05T20:00:00+08:00",
+  "slots": [
+    {
+      "date": "2026-07-05",
+      "time": "20:00",
+      "content_goal": "增加收藏",
+      "notes": "填写本次验证使用的计划发布时间。"
+    }
+  ]
+}

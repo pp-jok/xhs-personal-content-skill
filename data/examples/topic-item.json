@@ -1,0 +1,13 @@
+{
+  "id": "topic-001",
+  "created_at": "2026-07-02T00:00:00Z",
+  "updated_at": "2026-07-02T00:00:00Z",
+  "title": "新手如何把学习计划拆到每天能执行",
+  "content_goal": "增加收藏",
+  "content_format": "图文",
+  "source_rule_cards": ["rule-card-001"],
+  "reference_posts": ["benchmark-post-001"],
+  "reason": "符合账号定位，且可沉淀为长期系列内容。",
+  "status": "idea",
+  "tags": ["tag-usage-topic"]
+}

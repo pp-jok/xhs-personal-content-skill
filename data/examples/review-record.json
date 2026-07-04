@@ -1,0 +1,15 @@
+{
+  "id": "review-001",
+  "created_at": "2026-07-02T00:00:00Z",
+  "updated_at": "2026-07-02T00:00:00Z",
+  "own_post_id": "own-post-001",
+  "performance_summary": "收藏表现高于评论，说明步骤型内容有保留价值。",
+  "lessons": ["封面文案要继续强调可执行", "结尾可以增加互动问题"],
+  "next_actions": ["补充同系列选题", "更新标题规则卡片示例"],
+  "rule_updates": [
+    {
+      "rule_card_id": "rule-card-001",
+      "suggestion": "增加适合收藏目标的封面表达示例。"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "draft-001",
+  "created_at": "2026-07-02T00:00:00Z",
+  "updated_at": "2026-07-02T00:00:00Z",
+  "topic_id": "topic-001",
+  "titles": ["新手学习计划，不要一开始就写太满"],
+  "cover_titles": ["每天能执行的学习计划"],
+  "script": "先从一个小目标开始，把任务拆到每天 20 分钟内可以完成。",
+  "shot_suggestions": ["展示空白计划表", "展示拆分后的每日任务", "展示复盘提醒"],
+  "status": "draft",
+  "quality_review": {
+    "account_fit": "贴合",
+    "risk": "无明显夸大表达"
+  },
+  "tags": ["tag-usage-topic"]
+}

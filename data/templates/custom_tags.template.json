@@ -1,0 +1,18 @@
+[
+  {
+    "id": "tag-usage-topic",
+    "name": "适合选题",
+    "type": "usage",
+    "description": "这条素材适合用于生成选题方向。",
+    "scope": ["benchmark_account", "benchmark_post", "rule_card", "topic_item"],
+    "weight": 4
+  },
+  {
+    "id": "tag-risk-not-fit",
+    "name": "不适合模仿",
+    "type": "risk",
+    "description": "这条素材有明显不适合当前账号直接模仿的地方。",
+    "scope": ["benchmark_account", "benchmark_post", "rule_card"],
+    "weight": 5
+  }
+]

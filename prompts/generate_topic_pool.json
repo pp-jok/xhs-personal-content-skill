@@ -1,0 +1,38 @@
+{
+  "id": "generate_topic_pool",
+  "purpose": "基于账号档案、标签和规则卡片生成选题池。",
+  "input_schema": {
+    "type": "object",
+    "required": ["creator_profile", "custom_tags", "rule_cards", "reference_posts", "topic_count"],
+    "properties": {
+      "creator_profile": {"type": "object", "required": ["id", "positioning", "target_audience", "goals", "content_formats"], "properties": {"id": {"type": "string"}, "positioning": {"type": "string"}, "target_audience": {"type": "array", "items": {"type": "string"}}, "goals": {"type": "array", "items": {"type": "string"}}, "content_formats": {"type": "array", "items": {"type": "string"}}}},
+      "custom_tags": {"type": "array", "items": {"type": "object", "required": ["id", "name", "type"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "type": {"type": "string"}}}},
+      "rule_cards": {"type": "array", "items": {"type": "object", "required": ["id", "name", "rule_summary", "tags"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "rule_summary": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}}}},
+      "reference_posts": {"type": "array", "items": {"type": "object", "required": ["id", "title", "tags"], "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}}}},
+      "topic_count": {"type": "integer"}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["topics", "warnings"],
+    "properties": {
+      "topics": {"type": "array", "items": {"type": "object", "required": ["title", "content_goal", "content_format", "source_rule_cards", "reference_posts", "reason", "tags"], "properties": {"title": {"type": "string"}, "content_goal": {"type": "string"}, "content_format": {"type": "string"}, "source_rule_cards": {"type": "array", "items": {"type": "string"}}, "reference_posts": {"type": "array", "items": {"type": "string"}}, "reason": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}}}},
+      "warnings": {"type": "array", "items": {"type": "string"}}
+    }
+  },
+  "constraints": [
+    "选题必须来自账号档案、标签、规则卡片或参考帖子。",
+    "不得生成与当前账号定位无关的泛选题。",
+    "每个选题必须给出生成理由。",
+    "输出必须是可解析 JSON。"
+  ],
+  "quality_standards": [
+    "选题标题应具体到目标人群或使用场景。",
+    "每个选题至少关联一张规则卡片或一篇参考帖子。",
+    "选题数量不得超过输入的 topic_count。"
+  ],
+  "failure_handling": {
+    "on_missing_input": "返回空 topics 和 warnings，说明缺少账号档案、标签或规则。",
+    "on_low_confidence": "减少选题数量，并标明需要人工筛选。"
+  }
+}

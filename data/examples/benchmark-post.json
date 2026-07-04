@@ -1,0 +1,31 @@
+{
+  "id": "benchmark-post-001",
+  "created_at": "2026-07-02T00:00:00Z",
+  "updated_at": "2026-07-02T00:00:00Z",
+  "account_id": "benchmark-account-001",
+  "title": "一个适合新手的学习计划拆解",
+  "url": "",
+  "content_type": "图文",
+  "cover_text": "新手学习计划",
+  "raw_content": "先明确目标，再拆分每天可以执行的小任务。",
+  "metrics": {
+    "likes": 120,
+    "comments": 18,
+    "saves": 45
+  },
+  "tags": ["tag-usage-topic", "tag-goal-save"],
+  "ai_analysis": {
+    "hook": "新手场景明确",
+    "structure": "问题、方法、步骤、提醒",
+    "audience_fit": "适合需要简单执行方案的人"
+  },
+  "borrowable_points": ["用具体人群开头", "步骤数量控制在 3 到 5 个"],
+  "non_borrowable_points": ["不要使用过度承诺"],
+  "rule_card_candidates": [
+    {
+      "name": "新手场景标题规则",
+      "type": "title",
+      "summary": "标题先点明人群，再说明具体收益。"
+    }
+  ]
+}

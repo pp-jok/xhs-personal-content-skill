@@ -1,0 +1,36 @@
+{
+  "id": "review_own_post",
+  "purpose": "基于已发布帖子和表现数据生成轻量复盘记录。",
+  "input_schema": {
+    "type": "object",
+    "required": ["creator_profile", "own_post", "related_rule_cards"],
+    "properties": {
+      "creator_profile": {"type": "object", "required": ["id", "goals", "positioning"], "properties": {"id": {"type": "string"}, "goals": {"type": "array", "items": {"type": "string"}}, "positioning": {"type": "string"}}},
+      "own_post": {"type": "object", "required": ["id", "title", "metrics", "tags", "source_topic_id"], "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "metrics": {"type": "object", "required": [], "properties": {}}, "tags": {"type": "array", "items": {"type": "string"}}, "source_topic_id": {"type": "string"}}},
+      "related_rule_cards": {"type": "array", "items": {"type": "object", "required": ["id", "name", "rule_summary"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "rule_summary": {"type": "string"}}}}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["review_record", "warnings"],
+    "properties": {
+      "review_record": {"type": "object", "required": ["own_post_id", "performance_summary", "lessons", "next_actions", "rule_updates"], "properties": {"own_post_id": {"type": "string"}, "performance_summary": {"type": "string"}, "lessons": {"type": "array", "items": {"type": "string"}}, "next_actions": {"type": "array", "items": {"type": "string"}}, "rule_updates": {"type": "array", "items": {"type": "object", "required": ["rule_card_id", "suggestion"], "properties": {"rule_card_id": {"type": "string"}, "suggestion": {"type": "string"}}}}}},
+      "warnings": {"type": "array", "items": {"type": "string"}}
+    }
+  },
+  "constraints": [
+    "复盘只基于输入指标，不编造表现数据。",
+    "复盘必须服务当前账号长期学习。",
+    "规则更新建议必须关联已有规则卡片。",
+    "输出必须是可解析 JSON。"
+  ],
+  "quality_standards": [
+    "表现摘要必须简短明确。",
+    "经验必须能转化为下一步动作。",
+    "规则更新建议必须具体到可编辑内容。"
+  ],
+  "failure_handling": {
+    "on_missing_input": "返回 warnings，不生成缺少指标支撑的结论。",
+    "on_low_confidence": "只输出观察，不给强结论。"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "benchmark-account-001",
+  "created_at": "2026-07-02T00:00:00Z",
+  "updated_at": "2026-07-02T00:00:00Z",
+  "name": "学习型账号 A",
+  "url": "",
+  "niche": "学习方法",
+  "reason_to_follow": "内容结构清晰，适合拆解选题和标题表达。",
+  "learnable_points": ["标题具体", "开头直接给场景", "结尾有行动建议"],
+  "non_learnable_points": ["语气不完全适配当前账号"],
+  "tags": ["tag-usage-topic", "tag-goal-save"],
+  "summary": "适合学习结构和选题，不直接模仿表达。"
+}

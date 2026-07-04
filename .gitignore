@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pycache/
+.pytest_cache/
+.coverage
+
+# Local run outputs
+tmp/
+.xhs-personal-content-skill/
+
+# Private account samples. Keep templates and examples public.
+data/real-sample/
+

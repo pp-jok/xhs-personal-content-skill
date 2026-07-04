@@ -1,0 +1,372 @@
+from __future__ import annotations
+
+from dataclasses import MISSING, asdict, dataclass, field, fields
+from datetime import datetime
+from typing import Any, ClassVar, Literal, TypeVar, get_args
+
+
+ModelT = TypeVar("ModelT", bound="BaseModel")
+
+TagScope = Literal[
+    "benchmark_account",
+    "benchmark_post",
+    "rule_card",
+    "topic_item",
+    "content_draft",
+    "publish_task",
+    "own_post",
+]
+
+TagType = Literal["preference", "usage", "goal", "risk", "source", "custom"]
+RuleType = Literal["title", "structure", "topic", "cover", "script", "operation"]
+ContentStatus = Literal["idea", "draft", "reviewing", "ready", "archived"]
+PublishStatus = Literal["planned", "preparing", "ready", "published", "cancelled"]
+
+
+class ValidationError(ValueError):
+    """Raised when model data does not satisfy the project contract."""
+
+
+def now_iso() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def require_text(value: str, field_name: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError(f"{field_name} must be a non-empty string")
+
+
+def require_list(value: list[Any], field_name: str) -> None:
+    if not isinstance(value, list):
+        raise ValidationError(f"{field_name} must be a list")
+
+
+def require_dict(value: dict[str, Any], field_name: str) -> None:
+    if not isinstance(value, dict):
+        raise ValidationError(f"{field_name} must be an object")
+
+
+def require_literal(value: str, allowed_type: Any, field_name: str) -> None:
+    allowed = get_args(allowed_type)
+    if value not in allowed:
+        joined = ", ".join(allowed)
+        raise ValidationError(f"{field_name} must be one of: {joined}")
+
+
+def ensure_list_items_are_text(value: list[Any], field_name: str) -> None:
+    require_list(value, field_name)
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValidationError(f"{field_name} must contain only non-empty strings")
+
+
+def ensure_optional_text(value: str | None, field_name: str) -> None:
+    if value is not None and not isinstance(value, str):
+        raise ValidationError(f"{field_name} must be a string or null")
+
+
+@dataclass
+class BaseModel:
+    id: str
+    created_at: str = field(default_factory=now_iso)
+    updated_at: str = field(default_factory=now_iso)
+
+    collection_name: ClassVar[str]
+
+    def __post_init__(self) -> None:
+        require_text(self.id, "id")
+        require_text(self.created_at, "created_at")
+        require_text(self.updated_at, "updated_at")
+        self.validate()
+
+    def validate(self) -> None:
+        raise NotImplementedError
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls: type[ModelT], data: dict[str, Any]) -> ModelT:
+        require_dict(data, cls.__name__)
+        field_names = {item.name for item in fields(cls)}
+        filtered = {key: value for key, value in data.items() if key in field_names}
+        missing = [
+            item.name
+            for item in fields(cls)
+            if item.default is MISSING
+            and item.default_factory is MISSING
+            and item.name not in filtered
+        ]
+        if missing:
+            raise ValidationError(f"Missing required fields: {', '.join(missing)}")
+        return cls(**filtered)
+
+
+@dataclass
+class CreatorProfile(BaseModel):
+    collection_name: ClassVar[str] = "creator-profiles"
+
+    name: str = ""
+    platform: str = "小红书"
+    positioning: str = ""
+    target_audience: list[str] = field(default_factory=list)
+    content_style: list[str] = field(default_factory=list)
+    forbidden_expressions: list[str] = field(default_factory=list)
+    goals: list[str] = field(default_factory=list)
+    content_formats: list[str] = field(default_factory=list)
+    publish_frequency: str = ""
+    notes: str = ""
+
+    def validate(self) -> None:
+        require_text(self.name, "name")
+        require_text(self.platform, "platform")
+        require_text(self.positioning, "positioning")
+        ensure_list_items_are_text(self.target_audience, "target_audience")
+        ensure_list_items_are_text(self.content_style, "content_style")
+        ensure_list_items_are_text(self.forbidden_expressions, "forbidden_expressions")
+        ensure_list_items_are_text(self.goals, "goals")
+        ensure_list_items_are_text(self.content_formats, "content_formats")
+        require_text(self.publish_frequency, "publish_frequency")
+        require_text(self.notes, "notes")
+
+
+@dataclass
+class BenchmarkAccount(BaseModel):
+    collection_name: ClassVar[str] = "benchmark-accounts"
+
+    name: str = ""
+    url: str = ""
+    niche: str = ""
+    reason_to_follow: str = ""
+    learnable_points: list[str] = field(default_factory=list)
+    non_learnable_points: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    summary: str = ""
+
+    def validate(self) -> None:
+        require_text(self.name, "name")
+        ensure_optional_text(self.url, "url")
+        require_text(self.niche, "niche")
+        require_text(self.reason_to_follow, "reason_to_follow")
+        ensure_list_items_are_text(self.learnable_points, "learnable_points")
+        ensure_list_items_are_text(self.non_learnable_points, "non_learnable_points")
+        ensure_list_items_are_text(self.tags, "tags")
+        require_text(self.summary, "summary")
+
+
+@dataclass
+class BenchmarkPost(BaseModel):
+    collection_name: ClassVar[str] = "benchmark-posts"
+
+    account_id: str = ""
+    title: str = ""
+    url: str = ""
+    content_type: str = ""
+    cover_text: str = ""
+    raw_content: str = ""
+    metrics: dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    ai_analysis: dict[str, Any] = field(default_factory=dict)
+    borrowable_points: list[str] = field(default_factory=list)
+    non_borrowable_points: list[str] = field(default_factory=list)
+    rule_card_candidates: list[dict[str, Any]] = field(default_factory=list)
+
+    def validate(self) -> None:
+        require_text(self.account_id, "account_id")
+        require_text(self.title, "title")
+        ensure_optional_text(self.url, "url")
+        require_text(self.content_type, "content_type")
+        ensure_optional_text(self.cover_text, "cover_text")
+        require_text(self.raw_content, "raw_content")
+        require_dict(self.metrics, "metrics")
+        ensure_list_items_are_text(self.tags, "tags")
+        require_dict(self.ai_analysis, "ai_analysis")
+        ensure_list_items_are_text(self.borrowable_points, "borrowable_points")
+        ensure_list_items_are_text(self.non_borrowable_points, "non_borrowable_points")
+        require_list(self.rule_card_candidates, "rule_card_candidates")
+        for candidate in self.rule_card_candidates:
+            require_dict(candidate, "rule_card_candidates item")
+
+
+@dataclass
+class CustomTag(BaseModel):
+    collection_name: ClassVar[str] = "custom-tags"
+
+    name: str = ""
+    type: TagType = "custom"
+    description: str = ""
+    scope: list[TagScope] = field(default_factory=list)
+    weight: int = 1
+
+    def validate(self) -> None:
+        require_text(self.name, "name")
+        require_literal(self.type, TagType, "type")
+        require_text(self.description, "description")
+        require_list(self.scope, "scope")
+        for item in self.scope:
+            require_literal(item, TagScope, "scope item")
+        if not isinstance(self.weight, int) or not 1 <= self.weight <= 5:
+            raise ValidationError("weight must be an integer from 1 to 5")
+
+
+@dataclass
+class RuleCard(BaseModel):
+    collection_name: ClassVar[str] = "rule-cards"
+
+    name: str = ""
+    type: RuleType = "topic"
+    source_ids: list[str] = field(default_factory=list)
+    applicable_scenarios: list[str] = field(default_factory=list)
+    rule_summary: str = ""
+    examples: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
+    adaptation_notes: str = ""
+    tags: list[str] = field(default_factory=list)
+
+    def validate(self) -> None:
+        require_text(self.name, "name")
+        require_literal(self.type, RuleType, "type")
+        ensure_list_items_are_text(self.source_ids, "source_ids")
+        ensure_list_items_are_text(self.applicable_scenarios, "applicable_scenarios")
+        require_text(self.rule_summary, "rule_summary")
+        ensure_list_items_are_text(self.examples, "examples")
+        ensure_list_items_are_text(self.risks, "risks")
+        require_text(self.adaptation_notes, "adaptation_notes")
+        ensure_list_items_are_text(self.tags, "tags")
+
+
+@dataclass
+class TopicItem(BaseModel):
+    collection_name: ClassVar[str] = "topic-pool"
+
+    title: str = ""
+    content_goal: str = ""
+    content_format: str = ""
+    source_rule_cards: list[str] = field(default_factory=list)
+    reference_posts: list[str] = field(default_factory=list)
+    reason: str = ""
+    status: ContentStatus = "idea"
+    tags: list[str] = field(default_factory=list)
+
+    def validate(self) -> None:
+        require_text(self.title, "title")
+        require_text(self.content_goal, "content_goal")
+        require_text(self.content_format, "content_format")
+        ensure_list_items_are_text(self.source_rule_cards, "source_rule_cards")
+        ensure_list_items_are_text(self.reference_posts, "reference_posts")
+        require_text(self.reason, "reason")
+        require_literal(self.status, ContentStatus, "status")
+        ensure_list_items_are_text(self.tags, "tags")
+
+
+@dataclass
+class ContentDraft(BaseModel):
+    collection_name: ClassVar[str] = "content-drafts"
+
+    topic_id: str = ""
+    titles: list[str] = field(default_factory=list)
+    cover_titles: list[str] = field(default_factory=list)
+    script: str = ""
+    shot_suggestions: list[str] = field(default_factory=list)
+    status: ContentStatus = "draft"
+    quality_review: dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+
+    def validate(self) -> None:
+        require_text(self.topic_id, "topic_id")
+        ensure_list_items_are_text(self.titles, "titles")
+        ensure_list_items_are_text(self.cover_titles, "cover_titles")
+        require_text(self.script, "script")
+        ensure_list_items_are_text(self.shot_suggestions, "shot_suggestions")
+        require_literal(self.status, ContentStatus, "status")
+        require_dict(self.quality_review, "quality_review")
+        ensure_list_items_are_text(self.tags, "tags")
+
+
+@dataclass
+class PublishTask(BaseModel):
+    collection_name: ClassVar[str] = "publish-tasks"
+
+    account_id: str = ""
+    draft_id: str = ""
+    planned_publish_time: str = ""
+    content_goal: str = ""
+    status: PublishStatus = "planned"
+    materials_needed: list[str] = field(default_factory=list)
+    result_metrics: dict[str, Any] = field(default_factory=dict)
+    review_summary: str = ""
+    tags: list[str] = field(default_factory=list)
+
+    def validate(self) -> None:
+        require_text(self.account_id, "account_id")
+        require_text(self.draft_id, "draft_id")
+        require_text(self.planned_publish_time, "planned_publish_time")
+        require_text(self.content_goal, "content_goal")
+        require_literal(self.status, PublishStatus, "status")
+        ensure_list_items_are_text(self.materials_needed, "materials_needed")
+        require_dict(self.result_metrics, "result_metrics")
+        ensure_optional_text(self.review_summary, "review_summary")
+        ensure_list_items_are_text(self.tags, "tags")
+
+
+@dataclass
+class OwnPost(BaseModel):
+    collection_name: ClassVar[str] = "own-posts"
+
+    account_id: str = ""
+    title: str = ""
+    url: str = ""
+    content_type: str = ""
+    published_at: str = ""
+    metrics: dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    source_topic_id: str = ""
+    review_record_id: str | None = None
+
+    def validate(self) -> None:
+        require_text(self.account_id, "account_id")
+        require_text(self.title, "title")
+        ensure_optional_text(self.url, "url")
+        require_text(self.content_type, "content_type")
+        require_text(self.published_at, "published_at")
+        require_dict(self.metrics, "metrics")
+        ensure_list_items_are_text(self.tags, "tags")
+        require_text(self.source_topic_id, "source_topic_id")
+        ensure_optional_text(self.review_record_id, "review_record_id")
+
+
+@dataclass
+class ReviewRecord(BaseModel):
+    collection_name: ClassVar[str] = "review-records"
+
+    own_post_id: str = ""
+    performance_summary: str = ""
+    lessons: list[str] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+    rule_updates: list[dict[str, Any]] = field(default_factory=list)
+
+    def validate(self) -> None:
+        require_text(self.own_post_id, "own_post_id")
+        require_text(self.performance_summary, "performance_summary")
+        ensure_list_items_are_text(self.lessons, "lessons")
+        ensure_list_items_are_text(self.next_actions, "next_actions")
+        require_list(self.rule_updates, "rule_updates")
+        for update in self.rule_updates:
+            require_dict(update, "rule_updates item")
+
+
+MODEL_TYPES: dict[str, type[BaseModel]] = {
+    model.collection_name: model
+    for model in [
+        CreatorProfile,
+        BenchmarkAccount,
+        BenchmarkPost,
+        CustomTag,
+        RuleCard,
+        TopicItem,
+        ContentDraft,
+        PublishTask,
+        OwnPost,
+        ReviewRecord,
+    ]
+}

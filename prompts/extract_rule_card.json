@@ -1,0 +1,70 @@
+{
+  "id": "extract_rule_card",
+  "purpose": "从帖子分析结果中提取可复用规则卡片。",
+  "input_schema": {
+    "type": "object",
+    "required": ["creator_profile", "benchmark_post_id", "analysis_result"],
+    "properties": {
+      "creator_profile": {
+        "type": "object",
+        "required": ["id", "positioning", "content_style", "forbidden_expressions"],
+        "properties": {
+          "id": {"type": "string"},
+          "positioning": {"type": "string"},
+          "content_style": {"type": "array", "items": {"type": "string"}},
+          "forbidden_expressions": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "benchmark_post_id": {"type": "string"},
+      "analysis_result": {
+        "type": "object",
+        "required": ["borrowable_points", "non_borrowable_points", "rule_card_candidates"],
+        "properties": {
+          "borrowable_points": {"type": "array", "items": {"type": "string"}},
+          "non_borrowable_points": {"type": "array", "items": {"type": "string"}},
+          "rule_card_candidates": {"type": "array", "items": {"type": "object", "required": ["name", "type", "summary"], "properties": {"name": {"type": "string"}, "type": {"type": "string"}, "summary": {"type": "string"}}}}
+        }
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["rule_cards", "warnings"],
+    "properties": {
+      "rule_cards": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "type", "source_ids", "applicable_scenarios", "rule_summary", "examples", "risks", "adaptation_notes", "tags"],
+          "properties": {
+            "name": {"type": "string"},
+            "type": {"type": "string"},
+            "source_ids": {"type": "array", "items": {"type": "string"}},
+            "applicable_scenarios": {"type": "array", "items": {"type": "string"}},
+            "rule_summary": {"type": "string"},
+            "examples": {"type": "array", "items": {"type": "string"}},
+            "risks": {"type": "array", "items": {"type": "string"}},
+            "adaptation_notes": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      },
+      "warnings": {"type": "array", "items": {"type": "string"}}
+    }
+  },
+  "constraints": [
+    "规则必须服务于当前账号，不抽象成通用写作技巧。",
+    "必须保留来源帖子 id。",
+    "必须包含风险和适配建议。",
+    "输出必须是可解析 JSON。"
+  ],
+  "quality_standards": [
+    "每张规则卡片只能表达一个清晰规则。",
+    "示例必须短且可复用。",
+    "风险必须能指导后续生成时避开不适配表达。"
+  ],
+  "failure_handling": {
+    "on_missing_input": "返回空 rule_cards 和 warnings，不生成来源不明的规则。",
+    "on_low_confidence": "只输出高置信规则，并在 warnings 中说明原因。"
+  }
+}

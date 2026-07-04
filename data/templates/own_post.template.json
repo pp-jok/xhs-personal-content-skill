@@ -1,0 +1,16 @@
+{
+  "id": "own-post-001",
+  "account_id": "creator-main",
+  "title": "填写自己已发布帖子标题",
+  "url": "",
+  "content_type": "图文",
+  "published_at": "2026-07-02T20:00:00+08:00",
+  "metrics": {
+    "likes": 0,
+    "comments": 0,
+    "saves": 0
+  },
+  "tags": ["tag-usage-topic"],
+  "source_topic_id": "topic-manual-001",
+  "review_record_id": null
+}

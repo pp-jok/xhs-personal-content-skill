@@ -1,0 +1,36 @@
+{
+  "id": "generate_publish_task",
+  "purpose": "把内容草稿转化为发布任务。",
+  "input_schema": {
+    "type": "object",
+    "required": ["creator_profile", "content_draft", "planned_publish_time"],
+    "properties": {
+      "creator_profile": {"type": "object", "required": ["id", "goals", "publish_frequency"], "properties": {"id": {"type": "string"}, "goals": {"type": "array", "items": {"type": "string"}}, "publish_frequency": {"type": "string"}}},
+      "content_draft": {"type": "object", "required": ["id", "topic_id", "status", "tags"], "properties": {"id": {"type": "string"}, "topic_id": {"type": "string"}, "status": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}}},
+      "planned_publish_time": {"type": "string"}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["publish_task", "warnings"],
+    "properties": {
+      "publish_task": {"type": "object", "required": ["account_id", "draft_id", "planned_publish_time", "content_goal", "status", "materials_needed", "tags"], "properties": {"account_id": {"type": "string"}, "draft_id": {"type": "string"}, "planned_publish_time": {"type": "string"}, "content_goal": {"type": "string"}, "status": {"type": "string"}, "materials_needed": {"type": "array", "items": {"type": "string"}}, "tags": {"type": "array", "items": {"type": "string"}}}},
+      "warnings": {"type": "array", "items": {"type": "string"}}
+    }
+  },
+  "constraints": [
+    "发布任务必须保留 account_id，支持未来多账号扩展。",
+    "不得执行自动发布。",
+    "只创建任务结构，不访问外部平台。",
+    "输出必须是可解析 JSON。"
+  ],
+  "quality_standards": [
+    "材料清单必须具体。",
+    "任务状态默认 planned。",
+    "内容目标应来自账号目标或草稿上下文。"
+  ],
+  "failure_handling": {
+    "on_missing_input": "返回 warnings，不创建缺少账号或草稿来源的任务。",
+    "on_low_confidence": "创建 planned 任务，并提示人工确认发布时间和材料。"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "creator-main",
+  "created_at": "2026-07-02T00:00:00Z",
+  "updated_at": "2026-07-02T00:00:00Z",
+  "name": "主账号",
+  "platform": "小红书",
+  "positioning": "面向新手的高效学习与生活记录账号",
+  "target_audience": ["刚开始建立学习习惯的人", "需要简单执行方案的人"],
+  "content_style": ["真诚", "具体", "可执行"],
+  "forbidden_expressions": ["夸大承诺", "制造焦虑"],
+  "goals": ["提升关注", "增加收藏", "建立信任"],
+  "content_formats": ["图文", "短视频"],
+  "publish_frequency": "每周 3 篇",
+  "notes": "第一版只维护一个主账号，字段保留多账号扩展空间。"
+}

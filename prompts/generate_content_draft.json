@@ -1,0 +1,37 @@
+{
+  "id": "generate_content_draft",
+  "purpose": "基于选题生成标题、封面文案、视频逐字稿和简单分镜。",
+  "input_schema": {
+    "type": "object",
+    "required": ["creator_profile", "topic", "rule_cards", "custom_tags"],
+    "properties": {
+      "creator_profile": {"type": "object", "required": ["id", "positioning", "content_style", "forbidden_expressions"], "properties": {"id": {"type": "string"}, "positioning": {"type": "string"}, "content_style": {"type": "array", "items": {"type": "string"}}, "forbidden_expressions": {"type": "array", "items": {"type": "string"}}}},
+      "topic": {"type": "object", "required": ["id", "title", "content_goal", "content_format", "tags"], "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "content_goal": {"type": "string"}, "content_format": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}}},
+      "rule_cards": {"type": "array", "items": {"type": "object", "required": ["id", "rule_summary", "risks"], "properties": {"id": {"type": "string"}, "rule_summary": {"type": "string"}, "risks": {"type": "array", "items": {"type": "string"}}}}},
+      "custom_tags": {"type": "array", "items": {"type": "object", "required": ["id", "name", "type"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "type": {"type": "string"}}}}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["draft", "warnings"],
+    "properties": {
+      "draft": {"type": "object", "required": ["topic_id", "titles", "cover_titles", "script", "shot_suggestions", "quality_review", "tags"], "properties": {"topic_id": {"type": "string"}, "titles": {"type": "array", "items": {"type": "string"}}, "cover_titles": {"type": "array", "items": {"type": "string"}}, "script": {"type": "string"}, "shot_suggestions": {"type": "array", "items": {"type": "string"}}, "quality_review": {"type": "object", "required": ["account_fit", "risk"], "properties": {"account_fit": {"type": "string"}, "risk": {"type": "string"}}}, "tags": {"type": "array", "items": {"type": "string"}}}},
+      "warnings": {"type": "array", "items": {"type": "string"}}
+    }
+  },
+  "constraints": [
+    "草稿必须围绕单个选题，不扩展成多个主题。",
+    "不得使用账号禁用表达。",
+    "标题、封面文案和脚本必须服务同一内容目标。",
+    "输出必须是可解析 JSON。"
+  ],
+  "quality_standards": [
+    "标题具体且不夸大。",
+    "脚本必须包含可执行信息。",
+    "质量检查必须说明账号适配度和风险。"
+  ],
+  "failure_handling": {
+    "on_missing_input": "返回空 draft 字段和 warnings，不补写缺失账号设定。",
+    "on_low_confidence": "缩短草稿并提示需要人工润色。"
+  }
+}

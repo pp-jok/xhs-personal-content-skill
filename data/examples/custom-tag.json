@@ -1,0 +1,10 @@
+{
+  "id": "tag-usage-topic",
+  "created_at": "2026-07-02T00:00:00Z",
+  "updated_at": "2026-07-02T00:00:00Z",
+  "name": "适合选题",
+  "type": "usage",
+  "description": "这条素材适合用于生成选题方向。",
+  "scope": ["benchmark_account", "benchmark_post", "rule_card", "topic_item"],
+  "weight": 4
+}

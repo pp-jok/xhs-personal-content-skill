@@ -1,0 +1,13 @@
+{
+  "id": "creator-main",
+  "name": "填写账号名称",
+  "platform": "小红书",
+  "positioning": "填写账号定位",
+  "target_audience": ["填写目标用户 1", "填写目标用户 2"],
+  "content_style": ["填写风格关键词 1", "填写风格关键词 2"],
+  "forbidden_expressions": ["填写禁用表达 1"],
+  "goals": ["提升关注", "增加收藏"],
+  "content_formats": ["图文", "短视频"],
+  "publish_frequency": "例如：每周 3 篇",
+  "notes": "补充账号背景、长期方向或人工偏好。"
+}

@@ -1,0 +1,14 @@
+{
+  "id": "rule-card-001",
+  "created_at": "2026-07-02T00:00:00Z",
+  "updated_at": "2026-07-02T00:00:00Z",
+  "name": "新手场景标题规则",
+  "type": "title",
+  "source_ids": ["benchmark-post-001"],
+  "applicable_scenarios": ["新手学习", "习惯建立", "方法拆解"],
+  "rule_summary": "标题先点明具体人群，再给出可执行收益。",
+  "examples": ["新手也能执行的 3 步学习计划"],
+  "risks": ["收益表达不能夸大", "避免制造焦虑"],
+  "adaptation_notes": "当前账号应使用真诚、具体的表达，不使用压迫式语气。",
+  "tags": ["tag-usage-topic"]
+}
