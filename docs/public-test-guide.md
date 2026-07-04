@@ -43,8 +43,9 @@ cp -R xhs-personal-content-skill ~/.codex/skills/xhs-personal-content-skill
 
 预期结果：
 
-- 创建或确认 `.xhs-personal-content-skill/real-sample/`。
-- 说明后续账号数据会保存在当前项目内。
+- 用普通话术说明账号工作区已准备好。
+- 不主动暴露文件路径、命令或内部数据结构。
+- 引导测试者先补账号定位、目标用户、内容风格、禁用表达和近期目标。
 
 ### 第二步：补充账号档案
 
@@ -60,8 +61,9 @@ cp -R xhs-personal-content-skill ~/.codex/skills/xhs-personal-content-skill
 
 预期结果：
 
-- 写入或更新 `creator_profile.json`。
-- 总结已保存的信息和仍缺失的信息。
+- 说明哪些账号信息已经保存。
+- 指出还缺哪些会影响生成质量的信息。
+- 最多追问 3 个问题，不要求测试者一次填完所有信息。
 
 ### 第三步：添加对标内容
 
@@ -73,9 +75,10 @@ cp -R xhs-personal-content-skill ~/.codex/skills/xhs-personal-content-skill
 
 预期结果：
 
-- 写入或更新 `benchmark_account.json`。
-- 写入或更新 `benchmark_post.json`。
+- 说明这篇内容已加入素材库。
+- 提炼可借鉴点和不可直接照搬的风险。
 - 只记录用户提供或截图中可见的信息。
+- 用一个简单问题引导测试者说明最想学哪一点。
 
 ### 第四步：记录偏好
 
@@ -85,8 +88,9 @@ cp -R xhs-personal-content-skill ~/.codex/skills/xhs-personal-content-skill
 
 预期结果：
 
-- 偏好进入标签、规则卡片备注或验证反馈。
-- 后续生成时能避开类似问题。
+- 明确复述这条偏好。
+- 说明以后会如何影响标题、封面、选题或脚本。
+- 不要求测试者理解标签、规则卡片或数据文件。
 
 ### 第五步：运行验证
 
@@ -96,9 +100,10 @@ cp -R xhs-personal-content-skill ~/.codex/skills/xhs-personal-content-skill
 
 预期结果：
 
-- 生成 `reports/validation_report.md`。
-- 生成 `reports/human_review_form.md`。
-- 报告列出输入数量、规则卡片数量、选题数量、草稿数量、发布任务数量和每一步状态。
+- 用普通话术说明验证是否完成。
+- 总结样本数量是否够用、规则是否有效、选题和草稿是否值得人工评估。
+- 默认不展示命令和文件路径。
+- 如果测试者说“显示技术细节”，再展示报告位置和命令。
 
 ## 5. 评价标准
 
@@ -114,6 +119,9 @@ cp -R xhs-personal-content-skill ~/.codex/skills/xhs-personal-content-skill
 
 评价维度：
 
+- 引导是否顺畅。
+- 是否少暴露系统层面的文件、命令和数据结构。
+- 是否能告诉我下一步该补什么。
 - 选题是否适合账号。
 - 标题是否可用。
 - 封面标题是否可用。
@@ -132,6 +140,8 @@ cp -R xhs-personal-content-skill ~/.codex/skills/xhs-personal-content-skill
 ```text
 测试账号定位：
 输入了多少篇对标帖子：
+引导是否顺畅：
+有没有暴露太多技术细节：
 最有用的功能：
 最不好用的步骤：
 生成内容最大问题：
@@ -144,6 +154,5 @@ cp -R xhs-personal-content-skill ~/.codex/skills/xhs-personal-content-skill
 - 当前没有 UI。
 - 当前不做真实平台抓取。
 - 当前不做自动发布。
-- 当前 CLI 生成链路使用 mock 服务，主要验证数据流。
 - 高质量内容生成依赖 Codex 对话读取本地项目数据后完成。
-
+- 技术细节默认隐藏；需要排查问题时可以让 Codex 显示技术细节。

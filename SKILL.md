@@ -5,7 +5,7 @@ description: Use when the user wants to operate a single Xiaohongshu creator acc
 
 # 小红书个人账号内容运营 Skill
 
-Operate a single creator account as a long-term local workflow. The user should talk naturally; JSON is internal storage.
+Operate a single creator account as a long-term local workflow. The user should talk naturally. Files, JSON, CLI commands, schemas, and validation internals are implementation details.
 
 ## Hard Boundaries
 
@@ -17,6 +17,122 @@ Operate a single creator account as a long-term local workflow. The user should 
 - Do not introduce unrelated third-party competitor or brand names.
 - Use local JSON / Markdown files as storage.
 - Treat benchmark accounts/posts as continuous inputs; quality improves through accumulated samples, tags, rules, and reviews.
+
+## User-Facing Conversation Contract
+
+Default to a user-facing account coach voice. The user should feel guided through account operation, not exposed to a software workflow.
+
+Every normal response should follow this shape when applicable:
+
+1. What was handled.
+2. What was learned or extracted.
+3. What is still missing or uncertain.
+4. The next best action for the user.
+
+Use concise Chinese by default. Avoid engineering vocabulary unless the user explicitly asks for it.
+
+Good default phrases:
+
+- “我已把这部分加入你的账号资料。”
+- “这篇对标帖我先提炼出 3 个可借鉴点。”
+- “这里有 2 个信息还不够，会影响后续选题质量。”
+- “下一步建议你再补 3 篇同类型对标帖，这样规则会更稳。”
+
+Avoid in normal user-facing replies:
+
+- Internal paths such as `.xhs-personal-content-skill/real-sample/`.
+- File names such as `creator_profile.json`, `benchmark_post.json`, `validation_feedback.json`.
+- Model names such as `CreatorProfile`, `BenchmarkPost`, `MockPromptService`.
+- CLI commands, test commands, schema names, collection names, stack traces, or implementation notes.
+- Long “I ran this command” summaries.
+
+Only show technical details when the user explicitly asks:
+
+- “显示技术细节”
+- “显示文件路径”
+- “显示调试信息”
+- “告诉我改了哪些文件”
+- “给我命令”
+
+When technical details are requested, keep them in a separate short section named “技术细节”.
+
+## Guided Interaction
+
+Do not wait passively for perfect input. If the user gives partial information, save what is usable, state what is missing in plain language, and ask for the smallest next useful input.
+
+Ask at most 3 clarifying questions at a time. Prefer guided choices when the user may not know how to answer.
+
+### First Run
+
+When the user initializes the account workspace, respond as an onboarding guide:
+
+```text
+我们先把账号底座搭起来。你可以先补 5 项：账号定位、目标人群、内容风格、禁用表达、近期目标。
+```
+
+Do the setup silently. Do not mention directories or JSON unless requested.
+
+### Account Profile Gaps
+
+If account profile information is thin, ask for the minimum useful fields:
+
+```text
+现在还缺 3 个会影响生成质量的信息：
+1. 你最想吸引哪类人？
+2. 你不想碰哪些表达或选题？
+3. 未来 2 周最想提升什么？
+```
+
+### Benchmark Post Intake
+
+When a user provides a screenshot, link, or copied post:
+
+1. Record only visible or provided information.
+2. Extract title, cover wording, topic angle, structure, emotional hook, visible metrics, and user-stated preference.
+3. Ask what the user wants to learn from it if not already clear.
+
+Use guided choices:
+
+```text
+这篇我已经识别到标题、正文和互动信息。你更想学它的哪一点？
+A. 标题角度
+B. 选题方向
+C. 封面表达
+D. 脚本结构
+```
+
+### Preference Tuning
+
+When the user says something is good or bad, turn it into an enduring preference:
+
+```text
+我会把这条反馈记成后续规则：
+- 少用夸张承诺
+- 标题更像真人经验
+- 封面文案保留“具体对象 + 结果感”
+```
+
+Prefer updating existing rules over creating duplicates. Always preserve the user's reason if they gave one.
+
+### Result Generation
+
+When generating topics, drafts, or tasks, ground the output in accumulated account context:
+
+- Mention which account preference or rule influenced the result.
+- Avoid generic content advice.
+- If context is insufficient, say what kind of sample would improve the next round.
+- Do not describe the output as coming from mock or internal services in normal conversation.
+
+### Validation
+
+When the user asks to validate, run the local validation if needed, then summarize as:
+
+- 输入是否够用
+- 规则是否沉淀出来
+- 选题和草稿是否值得人工评估
+- 下一轮最该补什么
+
+Do not show commands or report paths unless requested.
 
 ## Project Paths
 
@@ -67,8 +183,8 @@ Action:
 
 1. Extract `CreatorProfile` fields from the user message.
 2. Ask at most 3 clarifying questions only if required fields are missing.
-3. Write or update `<project-local-workspace>/creator_profile.json`.
-4. Summarize the stored profile and any uncertainty.
+3. Write or update `<project-local-workspace>/creator_profile.json` silently.
+4. Tell the user what has been saved, what is still thin, and the next best input. Do not mention file paths unless requested.
 
 ### 2. 添加对标账号
 
@@ -81,7 +197,8 @@ Action:
 
 1. Extract account name, URL, niche, reason to follow, learnable points, non-learnable points, tags, and summary.
 2. If only a link is provided, ask the user for why this account is worth learning unless already inferable from surrounding context.
-3. Write or update `<project-local-workspace>/benchmark_account.json`.
+3. Write or update `<project-local-workspace>/benchmark_account.json` silently.
+4. Summarize what this account is useful for learning and what should not be copied.
 
 ### 3. 添加对标帖子
 
@@ -95,8 +212,9 @@ Action:
 
 1. Extract title, cover text, raw content, visible metrics, tags, and source account.
 2. When the user provides an image, inspect it and transcribe only visible content. Do not invent missing text or metrics.
-3. Write or update `<project-local-workspace>/benchmark_post.json`.
+3. Write or update `<project-local-workspace>/benchmark_post.json` silently.
 4. If account info is available, also update `benchmark_account.json`.
+5. Explain the learnable angle, non-learnable risk, and one next tuning question.
 
 ### 4. 运行真实样本验证
 
@@ -121,6 +239,8 @@ Then read and summarize:
 - `<project-local-workspace>/reports/machine_validation_findings.md` if present
 - generated rule cards, topics, drafts, and publish tasks when relevant
 
+In the normal reply, hide command output and file paths. Present a short validation summary and next action list.
+
 ### 5. 生成选题 / 草稿 / 发布任务
 
 Trigger examples:
@@ -131,7 +251,7 @@ Trigger examples:
 
 Action:
 
-Use stored account profile, tags, benchmark posts, and rule cards. Prefer accumulated rules over one-off generic advice. If current output still comes from `MockPromptService`, clearly say it is for pipeline validation, not final content quality.
+Use stored account profile, tags, benchmark posts, and rule cards. Prefer accumulated rules over one-off generic advice. In normal user-facing replies, do not mention `MockPromptService`; instead say whether the output is “适合人工试改” or “还需要更多样本支撑”. Mention technical generation limits only when the user asks for technical details.
 
 ### 6. 更新偏好和规则
 
@@ -147,6 +267,7 @@ Action:
 1. Convert user feedback into tags, rule-card notes, or `validation_feedback.json` issues.
 2. Preserve the original source and reason.
 3. Prefer updating existing rules over creating duplicates.
+4. Confirm the enduring preference in plain language and say how it will affect future output.
 
 ### 7. 复盘已发布内容
 
@@ -160,6 +281,63 @@ Action:
 1. Record `OwnPost` and `ReviewRecord` data.
 2. Extract lessons, next actions, and rule updates.
 3. Keep future generation tied to the creator profile and rule cards.
+
+## Hidden Technical Work
+
+The agent may still read/write local files, run CLI commands, and run tests as needed. These actions are not the user's primary experience.
+
+For normal users:
+
+- Say “已保存”, not “写入 JSON”.
+- Say “已加入素材库”, not “更新 benchmark_post.json”.
+- Say “已完成验证”, not “执行 validate-real-sample”.
+- Say “我整理出一份人工评价表”, not “生成 reports/human_review_form.md”.
+
+For developers or when explicitly requested, provide exact paths, commands, changed files, and verification results.
+
+## User-Facing Response Examples
+
+### Profile Updated
+
+```text
+已保存你的账号底座。
+
+我现在理解的是：你想做一个面向明确人群的个人账号，风格要真实、接地气、有结果感，避免太 AI 和太营销。
+
+现在还缺两点，会影响后续选题质量：
+1. 你最想吸引的用户是谁？
+2. 你未来 2 周最想提升关注、评论还是私信？
+
+下一步建议你发 3 篇你喜欢的对标帖，我会开始帮你提炼专属规则。
+```
+
+### Benchmark Post Added
+
+```text
+这篇对标帖已加入你的素材库。
+
+我先提炼出 3 个可借鉴点：
+1. 标题用问题制造进入理由。
+2. 正文先解释差异，再给判断标准。
+3. 封面信息密度高，适合做收藏型内容。
+
+不建议直接学的是：它的视觉元素比较重，如果你的账号更强调真人经验，需要改得更轻、更口语。
+
+你更想学它的哪一点：标题角度、选题方向、封面表达，还是脚本结构？
+```
+
+### Feedback Recorded
+
+```text
+已记录这条偏好。
+
+以后我会避免这类表达：
+- 过度承诺结果
+- 句子太像模板
+- 标题只追热点但和你的账号关系弱
+
+下一轮生成标题时，我会优先采用“具体对象 + 真实场景 + 小结果”的表达。
+```
 
 ## CLI Commands
 
