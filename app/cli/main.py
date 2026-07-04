@@ -6,8 +6,23 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from app.models.core import MODEL_TYPES, BaseModel, BenchmarkAccount, BenchmarkPost, CreatorProfile, CustomTag
+from app.models.core import (
+    MODEL_TYPES,
+    BaseModel,
+    BenchmarkAccount,
+    BenchmarkPost,
+    ContentDraft,
+    CreatorProfile,
+    CustomTag,
+    OwnPost,
+    PublishTask,
+    ReviewRecord,
+    RuleCard,
+    TopicItem,
+)
 from app.repositories import JsonRepository
+from app.services.mock_prompt_service import MockPromptService
+from app.services.prompt_contracts import load_contracts
 from app.services.real_sample_validation import RealSampleValidator
 from app.workflows import BenchmarkToPublishWorkflow
 
@@ -99,6 +114,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     workspace_validation_parser.add_argument("--workspace", required=True, help="Workspace directory.")
     workspace_validation_parser.set_defaults(handler=handle_validate_workspace)
+
+    rule_parser = subparsers.add_parser("generate-rule-cards", help="Generate local mock rule cards for one benchmark post.")
+    rule_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    rule_parser.add_argument("--creator-id", required=True, help="CreatorProfile id.")
+    rule_parser.add_argument("--benchmark-post-id", required=True, help="BenchmarkPost id.")
+    rule_parser.set_defaults(handler=handle_generate_rule_cards)
+
+    topics_parser = subparsers.add_parser("generate-topics", help="Generate local mock topics from rules and one benchmark post.")
+    topics_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    topics_parser.add_argument("--creator-id", required=True, help="CreatorProfile id.")
+    topics_parser.add_argument("--benchmark-post-id", required=True, help="BenchmarkPost id.")
+    topics_parser.add_argument("--topic-count", type=int, default=5, help="Number of topics to generate.")
+    topics_parser.set_defaults(handler=handle_generate_topics)
+
+    draft_parser = subparsers.add_parser("generate-draft", help="Generate a local mock draft for one topic.")
+    draft_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    draft_parser.add_argument("--topic-id", required=True, help="TopicItem id.")
+    draft_parser.set_defaults(handler=handle_generate_draft)
+
+    publish_parser = subparsers.add_parser("create-publish-task", help="Create a publish task for one draft.")
+    publish_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    publish_parser.add_argument("--draft-id", required=True, help="ContentDraft id.")
+    publish_parser.add_argument("--planned-publish-time", required=True, help="Planned publish time string.")
+    publish_parser.add_argument("--account-id", default="creator-main", help="Creator account id.")
+    publish_parser.set_defaults(handler=handle_create_publish_task)
+
+    review_parser = subparsers.add_parser("review-own-post", help="Create a review record for one own post.")
+    review_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    review_parser.add_argument("--own-post-id", required=True, help="OwnPost id.")
+    review_parser.set_defaults(handler=handle_review_own_post)
 
     return parser
 
@@ -219,13 +264,135 @@ def handle_add_feedback(args: argparse.Namespace) -> dict[str, Any]:
         merged = incoming
 
     write_json(target, merged)
-    return {"workspace": str(workspace), "issue_count": len(merged.get("issues", []))}
+    rule_card_ids = create_feedback_rule_cards(workspace, issues)
+    return {"workspace": str(workspace), "issue_count": len(merged.get("issues", [])), "rule_card_ids": rule_card_ids}
 
 
 def handle_validate_workspace(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
     return workspace_status(workspace)
+
+
+def handle_generate_rule_cards(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    creator = JsonRepository(workspace, CreatorProfile).read(args.creator_id)
+    post_repo = JsonRepository(workspace, BenchmarkPost)
+    post = post_repo.read(args.benchmark_post_id)
+    tags = JsonRepository(workspace, CustomTag).list_all()
+    prompt_service = build_prompt_service(args.prompts_dir)
+
+    analysis = prompt_service.run(
+        "analyze_benchmark_post",
+        {
+            "creator_profile": creator.to_dict(),
+            "benchmark_post": post.to_dict(),
+            "custom_tags": [tag.to_dict() for tag in tags],
+        },
+    )
+    post = post_repo.update(
+        post.id,
+        {
+            "ai_analysis": analysis["ai_analysis"],
+            "borrowable_points": analysis["borrowable_points"],
+            "non_borrowable_points": analysis["non_borrowable_points"],
+            "rule_card_candidates": analysis["rule_card_candidates"],
+        },
+    )
+    extracted = prompt_service.run(
+        "extract_rule_card",
+        {
+            "creator_profile": creator.to_dict(),
+            "benchmark_post_id": post.id,
+            "analysis_result": analysis,
+        },
+    )
+    saved = save_rule_cards(workspace, post.id, extracted["rule_cards"])
+    return {"rule_card_ids": [rule.id for rule in saved], "warnings": analysis.get("warnings", []) + extracted.get("warnings", [])}
+
+
+def handle_generate_topics(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    creator = JsonRepository(workspace, CreatorProfile).read(args.creator_id)
+    post = JsonRepository(workspace, BenchmarkPost).read(args.benchmark_post_id)
+    tags = JsonRepository(workspace, CustomTag).list_all()
+    rule_repo = JsonRepository(workspace, RuleCard)
+    rule_cards = [rule for rule in rule_repo.list_all() if post.id in rule.source_ids]
+    if not rule_cards:
+        generated = handle_generate_rule_cards(args)
+        rule_cards = [rule_repo.read(rule_id) for rule_id in generated["rule_card_ids"]]
+
+    topic_payload = build_prompt_service(args.prompts_dir).run(
+        "generate_topic_pool",
+        {
+            "creator_profile": creator.to_dict(),
+            "custom_tags": [tag.to_dict() for tag in tags],
+            "rule_cards": [rule.to_dict() for rule in rule_cards],
+            "reference_posts": [post.to_dict()],
+            "topic_count": args.topic_count,
+        },
+    )
+    saved = save_topics(workspace, post.id, topic_payload["topics"])
+    return {"topic_ids": [topic.id for topic in saved], "warnings": topic_payload.get("warnings", [])}
+
+
+def handle_generate_draft(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    topic = JsonRepository(workspace, TopicItem).read(args.topic_id)
+    creator = first_record(workspace, CreatorProfile)
+    tags = JsonRepository(workspace, CustomTag).list_all()
+    rule_cards = JsonRepository(workspace, RuleCard).list_all()
+    draft_payload = build_prompt_service(args.prompts_dir).run(
+        "generate_content_draft",
+        {
+            "creator_profile": creator.to_dict(),
+            "topic": topic.to_dict(),
+            "rule_cards": [rule.to_dict() for rule in rule_cards],
+            "custom_tags": [tag.to_dict() for tag in tags],
+        },
+    )
+    saved = save_draft(workspace, args.topic_id, draft_payload["draft"])
+    return {"draft_id": saved.id, "warnings": draft_payload.get("warnings", [])}
+
+
+def handle_create_publish_task(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    creator = JsonRepository(workspace, CreatorProfile).read(args.account_id)
+    draft = JsonRepository(workspace, ContentDraft).read(args.draft_id)
+    publish_payload = build_prompt_service(args.prompts_dir).run(
+        "generate_publish_task",
+        {
+            "creator_profile": creator.to_dict(),
+            "content_draft": draft.to_dict(),
+            "planned_publish_time": args.planned_publish_time,
+        },
+    )
+    saved = save_publish_task(workspace, args.draft_id, publish_payload["publish_task"])
+    return {"publish_task_id": saved.id, "warnings": publish_payload.get("warnings", [])}
+
+
+def handle_review_own_post(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    own_post_repo = JsonRepository(workspace, OwnPost)
+    own_post = own_post_repo.read(args.own_post_id)
+    rule_cards = JsonRepository(workspace, RuleCard).list_all()
+    review_payload = build_prompt_service(args.prompts_dir).run(
+        "review_own_post",
+        {
+            "own_post": own_post.to_dict(),
+            "related_rule_cards": [rule.to_dict() for rule in rule_cards],
+        },
+    )
+    review_data = dict(review_payload["review_record"])
+    review_data["id"] = f"review-from-{own_post.id}"
+    review = JsonRepository(workspace, ReviewRecord).upsert(ReviewRecord.from_dict(review_data))
+    own_post_repo.update(own_post.id, {"review_record_id": review.id})
+    return {"review_record_id": review.id, "warnings": review_payload.get("warnings", [])}
 
 
 def get_model_type(collection: str) -> type[BaseModel]:
@@ -309,6 +476,102 @@ def count_feedback_issues(path: Path) -> int:
     data = read_json_object(path, path.name)
     issues = data.get("issues", [])
     return len(issues) if isinstance(issues, list) else 0
+
+
+def build_prompt_service(prompts_dir: str | Path) -> MockPromptService:
+    return MockPromptService(load_contracts(prompts_dir))
+
+
+def first_record(workspace: Path, model_type: type[BaseModel]) -> BaseModel:
+    items = JsonRepository(workspace, model_type).list_all()
+    if not items:
+        raise ValueError(f"No records found in {model_type.collection_name}")
+    return items[0]
+
+
+def save_rule_cards(workspace: Path, post_id: str, rule_cards: list[dict[str, Any]]) -> list[RuleCard]:
+    repo = JsonRepository(workspace, RuleCard)
+    saved = []
+    for index, rule_data in enumerate(rule_cards, start=1):
+        data = dict(rule_data)
+        data["id"] = f"rule-card-from-{post_id}-{index}"
+        saved.append(repo.upsert(RuleCard.from_dict(data)))
+    return saved
+
+
+def save_topics(workspace: Path, post_id: str, topics: list[dict[str, Any]]) -> list[TopicItem]:
+    repo = JsonRepository(workspace, TopicItem)
+    saved = []
+    for index, topic_data in enumerate(topics, start=1):
+        data = dict(topic_data)
+        data["id"] = f"topic-from-{post_id}-{index}"
+        data["status"] = "idea"
+        saved.append(repo.upsert(TopicItem.from_dict(data)))
+    return saved
+
+
+def save_draft(workspace: Path, topic_id: str, draft_data: dict[str, Any]) -> ContentDraft:
+    data = dict(draft_data)
+    data["id"] = f"draft-from-{topic_id}"
+    data["status"] = "draft"
+    return JsonRepository(workspace, ContentDraft).upsert(ContentDraft.from_dict(data))
+
+
+def save_publish_task(workspace: Path, draft_id: str, publish_task_data: dict[str, Any]) -> PublishTask:
+    data = dict(publish_task_data)
+    data["id"] = f"publish-task-from-{draft_id}"
+    data["result_metrics"] = data.get("result_metrics", {})
+    data["review_summary"] = data.get("review_summary", "")
+    return JsonRepository(workspace, PublishTask).upsert(PublishTask.from_dict(data))
+
+
+def create_feedback_rule_cards(workspace: Path, issues: list[Any]) -> list[str]:
+    repo = JsonRepository(workspace, RuleCard)
+    saved_ids: list[str] = []
+    existing_count = len(repo.list_all())
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        step = str(issue.get("step") or "custom").strip() or "custom"
+        problem = str(issue.get("problem") or "").strip()
+        suggestion = str(issue.get("suggestion") or "").strip()
+        if not problem and not suggestion:
+            continue
+        rule_type = feedback_step_to_rule_type(step)
+        rule_id = f"feedback-rule-{rule_type}-{len(saved_ids) + existing_count + 1}"
+        rule = RuleCard(
+            id=rule_id,
+            name=f"用户反馈规则：{rule_type}",
+            type=rule_type,
+            source_ids=["validation_feedback"],
+            applicable_scenarios=[step],
+            rule_summary=problem or suggestion,
+            examples=[],
+            risks=[problem] if problem else [],
+            adaptation_notes=suggestion or "后续生成时避开同类问题。",
+            tags=["feedback"],
+            source_type="user_feedback",
+            source_note=step,
+            user_reason=problem,
+            created_from="add-feedback",
+            confidence=0.8,
+        )
+        repo.upsert(rule)
+        saved_ids.append(rule.id)
+    return saved_ids
+
+
+def feedback_step_to_rule_type(step: str) -> str:
+    mapping = {
+        "title": "title",
+        "cover": "cover",
+        "cover_title": "cover",
+        "script": "script",
+        "draft": "script",
+        "topic": "topic",
+        "structure": "structure",
+    }
+    return mapping.get(step, "operation")
 
 
 if __name__ == "__main__":

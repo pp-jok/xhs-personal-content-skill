@@ -74,6 +74,33 @@ class ModelTests(unittest.TestCase):
                 ai_analysis="not-an-object",
             )
 
+    def test_models_accept_partial_input_metadata(self) -> None:
+        profile = CreatorProfile(
+            id="creator-partial",
+            name="测试账号",
+            platform="小红书",
+            positioning="职场表达",
+            target_audience=["职场新人"],
+            content_style=["真实"],
+            forbidden_expressions=[],
+            goals=["提升收藏"],
+            content_formats=["图文"],
+            publish_frequency="待补充",
+            notes="用户只提供了基础定位。",
+            missing_fields=["forbidden_expressions"],
+            confidence=0.6,
+            source_type="user_input",
+            source_note="来自一次简短对话",
+            user_reason="先保存，后续补充",
+            created_from="phase7-partial-intake",
+        )
+
+        data = profile.to_dict()
+
+        self.assertEqual(data["missing_fields"], ["forbidden_expressions"])
+        self.assertEqual(data["confidence"], 0.6)
+        self.assertEqual(data["source_type"], "user_input")
+
     def test_collection_names_are_unique(self) -> None:
         self.assertEqual(len(MODEL_TYPES), 10)
         self.assertEqual(MODEL_TYPES["creator-profiles"], CreatorProfile)

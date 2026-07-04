@@ -70,6 +70,12 @@ class BaseModel:
     id: str
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
+    missing_fields: list[str] = field(default_factory=list)
+    confidence: float = 1.0
+    source_type: str = ""
+    source_note: str = ""
+    user_reason: str = ""
+    created_from: str = ""
 
     collection_name: ClassVar[str]
 
@@ -77,6 +83,13 @@ class BaseModel:
         require_text(self.id, "id")
         require_text(self.created_at, "created_at")
         require_text(self.updated_at, "updated_at")
+        ensure_list_items_are_text(self.missing_fields, "missing_fields")
+        if not isinstance(self.confidence, (int, float)) or not 0 <= float(self.confidence) <= 1:
+            raise ValidationError("confidence must be a number from 0 to 1")
+        ensure_optional_text(self.source_type, "source_type")
+        ensure_optional_text(self.source_note, "source_note")
+        ensure_optional_text(self.user_reason, "user_reason")
+        ensure_optional_text(self.created_from, "created_from")
         self.validate()
 
     def validate(self) -> None:

@@ -426,6 +426,34 @@ Run Phase 6 validation:
 python3 -m app.cli validate-real-sample --workspace data/real-sample
 ```
 
+Initialize a project-local account workspace:
+
+```bash
+python3 -m app.cli init-workspace --workspace .xhs-personal-content-skill/real-sample
+```
+
+Write user-provided account and sample inputs:
+
+```bash
+python3 -m app.cli upsert-profile --workspace .xhs-personal-content-skill/real-sample --file /path/to/creator_profile.json
+python3 -m app.cli add-benchmark-account --workspace .xhs-personal-content-skill/real-sample --file /path/to/benchmark_account.json
+python3 -m app.cli add-benchmark-post --workspace .xhs-personal-content-skill/real-sample --file /path/to/benchmark_post.json
+python3 -m app.cli add-custom-tags --workspace .xhs-personal-content-skill/real-sample --file /path/to/custom_tags.json
+python3 -m app.cli add-feedback --workspace .xhs-personal-content-skill/real-sample --file /path/to/validation_feedback.json
+```
+
+Generate structured local artifacts for pipeline validation:
+
+```bash
+python3 -m app.cli generate-rule-cards --workspace .xhs-personal-content-skill/real-sample --creator-id creator-main --benchmark-post-id benchmark-post-001
+python3 -m app.cli generate-topics --workspace .xhs-personal-content-skill/real-sample --creator-id creator-main --benchmark-post-id benchmark-post-001 --topic-count 5
+python3 -m app.cli generate-draft --workspace .xhs-personal-content-skill/real-sample --topic-id topic-from-benchmark-post-001-1
+python3 -m app.cli create-publish-task --workspace .xhs-personal-content-skill/real-sample --draft-id draft-from-topic-from-benchmark-post-001-1 --planned-publish-time 2026-07-05T20:00:00+08:00
+python3 -m app.cli review-own-post --workspace .xhs-personal-content-skill/real-sample --own-post-id own-post-001
+```
+
+These generation commands are for stable file creation and validation. For user-facing quality, Codex should read the local context and generate the final topics, drafts, and feedback in conversation.
+
 ## Output Discipline
 
 When completing a user request:

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.models.core import BenchmarkAccount, BenchmarkPost, CreatorProfile, CustomTag, OwnPost
+from app.models.core import BenchmarkAccount, BenchmarkPost, CreatorProfile, CustomTag, OwnPost, RuleCard
 from app.repositories import JsonRepository
 from app.workflows import BenchmarkToPublishResult, BenchmarkToPublishWorkflow
 
@@ -59,7 +59,15 @@ class RealSampleValidator:
         validation_feedback = self._load_optional_json("validation_feedback.json")
 
         planned_publish_time = self._planned_publish_time(weekly_plan)
-        workflow_result = self._run_workflow(creator.id, benchmark_posts[0].id, planned_publish_time)
+        workflow_results = [
+            self._run_workflow(creator.id, benchmark_post.id, planned_publish_time)
+            for benchmark_post in benchmark_posts
+        ]
+        generated_rule_cards = [rule for result in workflow_results for rule in result.rule_cards]
+        generated_topics = [topic for result in workflow_results for topic in result.topics]
+        generated_drafts = [result.draft for result in workflow_results if result.draft]
+        generated_publish_tasks = [result.publish_task for result in workflow_results if result.publish_task]
+        rule_findings = analyze_rule_cards(generated_rule_cards)
 
         input_counts = {
             "creator_profiles": 1,
@@ -71,18 +79,18 @@ class RealSampleValidator:
             "validation_feedback_files": 1 if validation_feedback else 0,
         }
         generated_counts = {
-            "rule_cards": len(workflow_result.rule_cards),
-            "topics": len(workflow_result.topics),
-            "content_drafts": 1 if workflow_result.draft else 0,
-            "publish_tasks": 1 if workflow_result.publish_task else 0,
+            "rule_cards": len(generated_rule_cards),
+            "topics": len(generated_topics),
+            "content_drafts": len(generated_drafts),
+            "publish_tasks": len(generated_publish_tasks),
         }
         questions = default_human_review_questions()
-        suggestions = default_next_suggestions(workflow_result)
+        suggestions = default_next_suggestions(workflow_results, rule_findings)
         report_path = self.reports_dir / "validation_report.md"
         human_review_form_path = self.reports_dir / "human_review_form.md"
 
         report_path.write_text(
-            render_validation_report(input_counts, generated_counts, self.steps, questions, suggestions),
+            render_validation_report(input_counts, generated_counts, self.steps, questions, suggestions, rule_findings),
             encoding="utf-8",
         )
         if not human_review_form_path.exists():
@@ -210,6 +218,7 @@ def render_validation_report(
     steps: list[ValidationStep],
     questions: list[str],
     suggestions: list[str],
+    rule_findings: dict[str, Any] | None = None,
 ) -> str:
     lines = [
         "# Real Sample Validation Report",
@@ -228,6 +237,18 @@ def render_validation_report(
     for step in steps:
         status = "成功" if step.success else "失败"
         lines.append(f"- {step.name}: {status} - {step.message}")
+
+    if rule_findings is not None:
+        lines.extend(["", "## 规则合并检查", ""])
+        lines.append(f"- 重复规则: {len(rule_findings['duplicate_rule_summaries'])}")
+        lines.append(f"- 冲突规则: {len(rule_findings['conflict_rule_types'])}")
+        lines.append(f"- 低置信规则: {len(rule_findings['low_confidence_rule_ids'])}")
+        if rule_findings["duplicate_rule_summaries"]:
+            lines.append(f"- 需要合并的重复规则摘要: {'；'.join(rule_findings['duplicate_rule_summaries'])}")
+        if rule_findings["conflict_rule_types"]:
+            lines.append(f"- 需要人工判断的冲突类型: {'；'.join(rule_findings['conflict_rule_types'])}")
+        if rule_findings["low_confidence_rule_ids"]:
+            lines.append(f"- 建议复核的低置信规则: {'；'.join(rule_findings['low_confidence_rule_ids'])}")
 
     lines.extend(["", "## 需要人工评价的问题", ""])
     for question in questions:
@@ -290,12 +311,39 @@ def default_human_review_questions() -> list[str]:
     ]
 
 
-def default_next_suggestions(result: BenchmarkToPublishResult) -> list[str]:
+def default_next_suggestions(
+    results: list[BenchmarkToPublishResult],
+    rule_findings: dict[str, Any] | None = None,
+) -> list[str]:
     suggestions = [
         "请人工填写 reports/human_review_form.md。",
         "优先检查生成选题是否贴合账号定位。",
         "把评分低于 3 的维度整理进下一轮迭代问题。",
     ]
-    if result.warnings:
+    if any(result.warnings for result in results):
         suggestions.append("检查 workflow warnings，并补充缺失或低置信样本。")
+    if rule_findings and rule_findings["duplicate_rule_summaries"]:
+        suggestions.append("合并重复规则，避免后续生成反复套用同一种表达。")
+    if rule_findings and rule_findings["conflict_rule_types"]:
+        suggestions.append("人工判断冲突规则，明确哪些规则适合当前账号。")
     return suggestions
+
+
+def analyze_rule_cards(rule_cards: list[RuleCard]) -> dict[str, Any]:
+    summary_counts: dict[str, int] = {}
+    type_to_summaries: dict[str, set[str]] = {}
+    low_confidence_rule_ids: list[str] = []
+
+    for rule in rule_cards:
+        summary_counts[rule.rule_summary] = summary_counts.get(rule.rule_summary, 0) + 1
+        type_to_summaries.setdefault(rule.type, set()).add(rule.rule_summary)
+        if rule.confidence < 0.5:
+            low_confidence_rule_ids.append(rule.id)
+
+    return {
+        "duplicate_rule_summaries": [summary for summary, count in summary_counts.items() if count > 1],
+        "conflict_rule_types": [
+            rule_type for rule_type, summaries in type_to_summaries.items() if len(summaries) > 1
+        ],
+        "low_confidence_rule_ids": low_confidence_rule_ids,
+    }

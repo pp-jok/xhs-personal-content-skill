@@ -48,12 +48,14 @@ python3 -m app.cli.main validate-real-sample --workspace data/real-sample
 2. 读取对标账号。
 3. 读取对标帖子。
 4. 读取用户标签。
-5. 分析对标帖子。
-6. 生成规则卡片。
-7. 生成选题池。
+5. 批量分析 3 到 10 篇对标帖子。
+6. 为每篇对标帖生成规则卡片。
+7. 为每篇对标帖生成选题池。
 8. 从选题生成内容草稿。
 9. 创建发布任务。
 10. 输出验证报告。
+
+如果只录入 1 篇对标帖，流程仍然可以运行，但结论只能证明链路可用，不能证明规则足够稳定。建议至少录入 3 篇同方向对标帖，用于观察重复规则、冲突规则和低置信规则。
 
 ## 如何判断输出是否有效
 
@@ -70,6 +72,12 @@ python3 -m app.cli.main validate-real-sample --workspace data/real-sample
 - `data/real-sample/topic-pool/`
 - `data/real-sample/content-drafts/`
 - `data/real-sample/publish-tasks/`
+
+报告中的“规则合并检查”需要重点看：
+
+- 重复规则：同类表达是否被反复提炼，下一轮可合并。
+- 冲突规则：同一类型下是否出现互相拉扯的建议，需要人工判断。
+- 低置信规则：样本不足或依据弱的规则，不能直接用于长期调教。
 
 有效输出应满足：
 

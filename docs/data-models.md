@@ -3,10 +3,30 @@
 ## 通用规则
 
 - 每个模型都有 `id`、`created_at`、`updated_at`。
+- 每个模型都支持低门槛录入元数据：`missing_fields`、`confidence`、`source_type`、`source_note`、`user_reason`、`created_from`。
 - 每条记录存为一个 JSON 文件。
 - 标签字段统一保存标签 `id` 列表。
 - 时间字段使用可读字符串，第一版只做非空校验，后续再收紧格式。
 - `metrics`、`ai_analysis`、`quality_review` 等字段使用对象结构，便于后续扩展。
+
+## 低门槛录入元数据
+
+真实用户经常只提供部分信息。第一版不应为了通过校验编造内容，而应先保存可用信息，再标记缺口和来源。
+
+通用元数据字段：
+
+- `missing_fields`：仍需补充的字段名列表。
+- `confidence`：当前记录可信度，范围 0 到 1。
+- `source_type`：来源类型，例如 `user_input`、`screenshot`、`manual_template`、`user_feedback`。
+- `source_note`：来源补充说明。
+- `user_reason`：用户给出的选择、喜欢或不喜欢原因。
+- `created_from`：创建来源，例如 `add-feedback`、`manual-intake`、`validate-real-sample`。
+
+原则：
+
+- 能保存就先保存。
+- 不确定就标记不确定。
+- 不要为了通过校验编造字段。
 
 ## CreatorProfile
 

@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.cli.main import main  # noqa: E402
-from app.models.core import BenchmarkPost, CreatorProfile, CustomTag  # noqa: E402
+from app.models.core import BenchmarkPost, CreatorProfile, CustomTag, OwnPost  # noqa: E402
 from app.repositories import JsonRepository  # noqa: E402
 
 
@@ -242,6 +242,126 @@ class CliTests(unittest.TestCase):
             self.assertEqual(repeat["result"]["total"], 2)
             self.assertEqual(len(tags), 2)
             self.assertTrue((Path(temp_dir) / "custom-tags" / "tag-risk-ai.json").exists())
+
+    def test_generation_commands_create_rule_topic_draft_publish_task_and_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            JsonRepository(data_dir, OwnPost).create(
+                OwnPost(
+                    id="own-post-001",
+                    account_id="creator-main",
+                    title="测试已发布内容",
+                    content_type="图文",
+                    published_at="2026-07-04T20:00:00+08:00",
+                    metrics={"likes": 10, "comments": 2, "saves": 5},
+                    tags=["tag-usage-topic"],
+                    source_topic_id="topic-from-benchmark-post-001-1",
+                )
+            )
+
+            rules = self._run_cli(
+                [
+                    "--prompts-dir",
+                    str(PROJECT_ROOT / "prompts"),
+                    "generate-rule-cards",
+                    "--workspace",
+                    temp_dir,
+                    "--creator-id",
+                    "creator-main",
+                    "--benchmark-post-id",
+                    "benchmark-post-001",
+                ]
+            )
+            topics = self._run_cli(
+                [
+                    "--prompts-dir",
+                    str(PROJECT_ROOT / "prompts"),
+                    "generate-topics",
+                    "--workspace",
+                    temp_dir,
+                    "--creator-id",
+                    "creator-main",
+                    "--benchmark-post-id",
+                    "benchmark-post-001",
+                    "--topic-count",
+                    "2",
+                ]
+            )
+            draft = self._run_cli(
+                [
+                    "--prompts-dir",
+                    str(PROJECT_ROOT / "prompts"),
+                    "generate-draft",
+                    "--workspace",
+                    temp_dir,
+                    "--topic-id",
+                    "topic-from-benchmark-post-001-1",
+                ]
+            )
+            publish = self._run_cli(
+                [
+                    "--prompts-dir",
+                    str(PROJECT_ROOT / "prompts"),
+                    "create-publish-task",
+                    "--workspace",
+                    temp_dir,
+                    "--draft-id",
+                    draft["result"]["draft_id"],
+                    "--planned-publish-time",
+                    "2026-07-05T20:00:00+08:00",
+                ]
+            )
+            review = self._run_cli(
+                [
+                    "--prompts-dir",
+                    str(PROJECT_ROOT / "prompts"),
+                    "review-own-post",
+                    "--workspace",
+                    temp_dir,
+                    "--own-post-id",
+                    "own-post-001",
+                ]
+            )
+
+            self.assertTrue(rules["ok"])
+            self.assertEqual(rules["result"]["rule_card_ids"], ["rule-card-from-benchmark-post-001-1"])
+            self.assertEqual(len(topics["result"]["topic_ids"]), 2)
+            self.assertEqual(draft["result"]["draft_id"], "draft-from-topic-from-benchmark-post-001-1")
+            self.assertEqual(publish["result"]["publish_task_id"], "publish-task-from-draft-from-topic-from-benchmark-post-001-1")
+            self.assertEqual(review["result"]["review_record_id"], "review-from-own-post-001")
+            self.assertTrue((data_dir / "review-records" / "review-from-own-post-001.json").exists())
+
+    def test_add_feedback_creates_rule_card_for_preference_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            feedback_file = Path(temp_dir) / "feedback.json"
+            feedback_file.write_text(
+                json.dumps(
+                    {
+                        "reviewer": "测试者",
+                        "reviewed_at": "2026-07-04",
+                        "overall_notes": "标题太 AI。",
+                        "issues": [
+                            {
+                                "step": "title",
+                                "problem": "标题像模板化夸张承诺。",
+                                "suggestion": "后续标题优先使用真人经验口吻。",
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            output = self._run_cli(["add-feedback", "--workspace", temp_dir, "--file", str(feedback_file)])
+
+            self.assertEqual(output["result"]["rule_card_ids"], ["feedback-rule-title-1"])
+            rule_path = Path(temp_dir) / "rule-cards" / "feedback-rule-title-1.json"
+            self.assertTrue(rule_path.exists())
+            rule = json.loads(rule_path.read_text(encoding="utf-8"))
+            self.assertEqual(rule["type"], "title")
+            self.assertIn("真人经验口吻", rule["adaptation_notes"])
 
     def _run_cli(self, args: list[str], expected_code: int = 0) -> dict:
         buffer = StringIO()

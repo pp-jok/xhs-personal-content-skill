@@ -120,6 +120,60 @@ python3 -m app.cli.main validate-workspace --workspace .xhs-personal-content-ski
 - 缺失的必需样本。
 - 对标账号、对标帖子、标签和反馈问题数量。
 
+## 生成规则卡片
+
+```bash
+python3 -m app.cli.main generate-rule-cards \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --creator-id creator-main \
+  --benchmark-post-id benchmark-post-001
+```
+
+该命令使用本地 mock 链路分析一篇对标帖并落盘规则卡。它用于结构化验证，不代表最终内容质量。
+
+## 生成选题
+
+```bash
+python3 -m app.cli.main generate-topics \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --creator-id creator-main \
+  --benchmark-post-id benchmark-post-001 \
+  --topic-count 5
+```
+
+该命令会读取账号档案、标签、规则卡和指定对标帖，生成结构化选题记录。
+
+## 生成草稿
+
+```bash
+python3 -m app.cli.main generate-draft \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --topic-id topic-from-benchmark-post-001-1
+```
+
+该命令会生成标题、封面文案、脚本和简单分镜结构，适合用于验证落盘流程。高质量草稿仍应由 Codex 会话读取上下文后生成。
+
+## 创建发布任务
+
+```bash
+python3 -m app.cli.main create-publish-task \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --draft-id draft-from-topic-from-benchmark-post-001-1 \
+  --planned-publish-time 2026-07-05T20:00:00+08:00
+```
+
+该命令只创建本地发布任务，不会自动发布。
+
+## 复盘已发布内容
+
+```bash
+python3 -m app.cli.main review-own-post \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --own-post-id own-post-001
+```
+
+该命令会生成本地复盘记录，并把复盘记录关联回已发布内容。
+
 ## 运行本地工作流
 
 运行前需要先在 `data/` 中存在：
@@ -177,6 +231,12 @@ python3 -m app.cli.main validate-real-sample --workspace data/real-sample
 
 - `data/real-sample/reports/validation_report.md`
 - `data/real-sample/reports/human_review_form.md`
+
+Phase 7 后，真实样本验证会处理多篇对标帖，并在报告中补充规则合并检查：
+
+- 重复规则
+- 冲突规则
+- 低置信规则
 
 ## 可用 collection
 
