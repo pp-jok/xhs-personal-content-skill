@@ -242,16 +242,30 @@ Trigger examples:
 - “这篇小红书帖子可以对标”
 - “分析这个小红书链接”
 - “把这个链接加入素材库”
+- “拆解这篇素材是否值得对标”
+- “把这篇提升为对标内容”
 
 Action:
 
 1. Read account profile, tags, existing benchmark accounts/posts, and user preference feedback.
 2. If the user provides only a link, use `add-inbox-item`, then `capture-xhs-link`, and explain missing content plainly.
-3. Extract: title, cover text, raw content, content type, visible metrics, source account, user-stated reason, borrowable points, non-borrowable points, rule candidates.
-4. When the user provides an image, inspect it and transcribe only visible content. Do not invent missing text or metrics.
-5. If the source account is new and enough information exists, also add/update the benchmark account.
-6. Use `add-benchmark-post` only after enough visible content exists to form a real benchmark post.
-7. Reply with: learned angle, risk, possible rule, and one guided question such as “你更想学标题、选题、封面还是脚本？”
+3. When captured content exists, use `analyze-captured-post` to split observable facts, inferences, uncertainties, transferable elements, and non-transferable elements.
+4. Extract: title, cover text, raw content, content type, visible metrics, source account, user-stated reason, borrowable points, non-borrowable points, rule candidates.
+5. When the user provides an image, inspect it and transcribe only visible content. Do not invent missing text or metrics.
+6. If the user confirms it is worth benchmarking, use `promote-to-benchmark`.
+7. If the source account is new and enough information exists, also add/update the benchmark account.
+8. Use `add-benchmark-post` only after enough visible content exists to form a real benchmark post.
+9. Reply with: observed facts, useful inference, uncertainty, risk, possible rule, and one guided question such as “是否确认把它提升为对标内容？”
+
+For captured-post analysis, always separate:
+
+- 已看到的事实
+- 基于事实的判断
+- 还不确定的地方
+- 适合当前账号学习的点
+- 不适合直接照搬的点
+
+Do not say public metrics prove why content performed well.
 
 ### 4. 运行真实样本验证
 
@@ -463,6 +477,8 @@ Write user-provided account and sample inputs:
 python3 -m app.cli add-inbox-item --workspace .xhs-personal-content-skill/real-sample --url https://www.xiaohongshu.com/explore/xxxx --user-intent "学习选题和结构"
 python3 -m app.cli capture-xhs-link --workspace .xhs-personal-content-skill/real-sample --inbox-item-id inbox-xxxx --manual-file /path/to/manual-capture.json
 python3 -m app.cli show-capture-result --workspace .xhs-personal-content-skill/real-sample --capture-id capture-from-inbox-xxxx
+python3 -m app.cli analyze-captured-post --workspace .xhs-personal-content-skill/real-sample --capture-id capture-from-inbox-xxxx
+python3 -m app.cli promote-to-benchmark --workspace .xhs-personal-content-skill/real-sample --inbox-item-id inbox-xxxx
 python3 -m app.cli upsert-profile --workspace .xhs-personal-content-skill/real-sample --file /path/to/creator_profile.json
 python3 -m app.cli add-benchmark-account --workspace .xhs-personal-content-skill/real-sample --file /path/to/benchmark_account.json
 python3 -m app.cli add-benchmark-post --workspace .xhs-personal-content-skill/real-sample --file /path/to/benchmark_post.json

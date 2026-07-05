@@ -72,6 +72,16 @@
 
 说明：采集不到完整内容时必须记录缺失字段和 warning，不允许补造标题、正文、指标或评论。
 
+## BenchmarkAnalysis
+
+用途：记录采集内容的结构化拆解结果，为是否提升为对标帖、候选规则和衍生选题提供依据。
+
+字段：`id`、`benchmark_post_id`、`capture_id`、`analysis_template`、`observable_facts`、`topic_analysis`、`title_analysis`、`cover_analysis`、`structure_analysis`、`visual_analysis`、`audio_analysis`、`comment_analysis`、`engagement_analysis`、`account_fit`、`transferable_elements`、`non_transferable_elements`、`candidate_rule_ids`、`derived_topic_ids`、`uncertainties`、`confidence`。
+
+基础校验：采集记录不能为空；分析模板必须是 `video_tutorial`、`video_personal_story`、`video_review`、`image_carousel_tutorial`、`image_carousel_experience`、`case_study`、`listicle` 之一；事实、分析和账号适配字段必须是对象；可迁移点、不可迁移点、候选规则、不确定项必须是字符串列表。
+
+说明：`observable_facts` 只保存采集记录中的可见事实；各分析字段中的 `inference` 才保存推断。公开互动数据只能作为表现参考，不能解释为确定原因。
+
 ## CustomTag
 
 用途：定义可绑定到多个对象的自定义标签。

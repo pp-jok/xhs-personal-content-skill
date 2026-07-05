@@ -25,6 +25,15 @@ InboxStatus = Literal["inbox", "capturing", "captured", "analyzed", "promoted_to
 CaptureStatus = Literal["pending", "success", "partial", "failed"]
 CaptureMethod = Literal["manual", "browser_authorized"]
 CapturedContentType = Literal["unknown", "image", "video", "mixed"]
+AnalysisTemplate = Literal[
+    "video_tutorial",
+    "video_personal_story",
+    "video_review",
+    "image_carousel_tutorial",
+    "image_carousel_experience",
+    "case_study",
+    "listicle",
+]
 
 
 class ValidationError(ValueError):
@@ -278,6 +287,50 @@ class CaptureRecord(BaseModel):
 
 
 @dataclass
+class BenchmarkAnalysis(BaseModel):
+    collection_name: ClassVar[str] = "benchmark-analyses"
+
+    benchmark_post_id: str = ""
+    capture_id: str = ""
+    analysis_template: AnalysisTemplate = "image_carousel_tutorial"
+    observable_facts: dict[str, Any] = field(default_factory=dict)
+    topic_analysis: dict[str, Any] = field(default_factory=dict)
+    title_analysis: dict[str, Any] = field(default_factory=dict)
+    cover_analysis: dict[str, Any] = field(default_factory=dict)
+    structure_analysis: dict[str, Any] = field(default_factory=dict)
+    visual_analysis: dict[str, Any] = field(default_factory=dict)
+    audio_analysis: dict[str, Any] = field(default_factory=dict)
+    comment_analysis: dict[str, Any] = field(default_factory=dict)
+    engagement_analysis: dict[str, Any] = field(default_factory=dict)
+    account_fit: dict[str, Any] = field(default_factory=dict)
+    transferable_elements: list[str] = field(default_factory=list)
+    non_transferable_elements: list[str] = field(default_factory=list)
+    candidate_rule_ids: list[str] = field(default_factory=list)
+    derived_topic_ids: list[str] = field(default_factory=list)
+    uncertainties: list[str] = field(default_factory=list)
+
+    def validate(self) -> None:
+        ensure_optional_text(self.benchmark_post_id, "benchmark_post_id")
+        require_text(self.capture_id, "capture_id")
+        require_literal(self.analysis_template, AnalysisTemplate, "analysis_template")
+        require_dict(self.observable_facts, "observable_facts")
+        require_dict(self.topic_analysis, "topic_analysis")
+        require_dict(self.title_analysis, "title_analysis")
+        require_dict(self.cover_analysis, "cover_analysis")
+        require_dict(self.structure_analysis, "structure_analysis")
+        require_dict(self.visual_analysis, "visual_analysis")
+        require_dict(self.audio_analysis, "audio_analysis")
+        require_dict(self.comment_analysis, "comment_analysis")
+        require_dict(self.engagement_analysis, "engagement_analysis")
+        require_dict(self.account_fit, "account_fit")
+        ensure_list_items_are_text(self.transferable_elements, "transferable_elements")
+        ensure_list_items_are_text(self.non_transferable_elements, "non_transferable_elements")
+        ensure_list_items_are_text(self.candidate_rule_ids, "candidate_rule_ids")
+        ensure_list_items_are_text(self.derived_topic_ids, "derived_topic_ids")
+        ensure_list_items_are_text(self.uncertainties, "uncertainties")
+
+
+@dataclass
 class CustomTag(BaseModel):
     collection_name: ClassVar[str] = "custom-tags"
 
@@ -452,6 +505,7 @@ MODEL_TYPES: dict[str, type[BaseModel]] = {
         BenchmarkPost,
         ContentInboxItem,
         CaptureRecord,
+        BenchmarkAnalysis,
         CustomTag,
         RuleCard,
         TopicItem,

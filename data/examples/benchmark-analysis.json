@@ -1,0 +1,80 @@
+{
+  "id": "analysis-001",
+  "benchmark_post_id": "",
+  "capture_id": "capture-001",
+  "analysis_template": "image_carousel_tutorial",
+  "observable_facts": {
+    "title": "可见标题示例",
+    "body": "用户复制出来的可见正文。",
+    "metrics": {
+      "likes": 2,
+      "collects": 3,
+      "comments": null,
+      "shares": null
+    }
+  },
+  "topic_analysis": {
+    "observable": {
+      "title": "可见标题示例"
+    },
+    "inference": "内容围绕一个具体问题给出解释或方法。"
+  },
+  "title_analysis": {
+    "observable": "可见标题示例",
+    "inference": "标题需要人工判断结果感。",
+    "risk": "不能仅凭标题判断互动表现原因。"
+  },
+  "cover_analysis": {
+    "observable": [
+      "用户提供的截图"
+    ],
+    "inference": "图文首图可能承担点击理由。"
+  },
+  "structure_analysis": {
+    "observable": "用户复制出来的可见正文。",
+    "inference": "结构需要人工复核。"
+  },
+  "visual_analysis": {
+    "observable": [],
+    "inference": "需要结合图片序列或视频关键帧进一步判断。"
+  },
+  "audio_analysis": {
+    "observable": {},
+    "inference": "非视频内容，无音频分析。"
+  },
+  "comment_analysis": {
+    "observable": [],
+    "inference": "缺少评论，无法判断用户异议和衍生需求。"
+  },
+  "engagement_analysis": {
+    "observable": {
+      "likes": 2,
+      "collects": 3,
+      "comments": null,
+      "shares": null
+    },
+    "inference": "公开互动数据只能作为表现参考，不能解释为确定原因。"
+  },
+  "account_fit": {
+    "observable": {},
+    "inference": "需要结合账号档案判断是否适配。"
+  },
+  "transferable_elements": [
+    "标题围绕具体问题"
+  ],
+  "non_transferable_elements": [
+    "公开互动数据不能直接当作爆款原因"
+  ],
+  "candidate_rule_ids": [
+    "candidate-rule-from-capture-001-1"
+  ],
+  "derived_topic_ids": [],
+  "uncertainties": [
+    "metrics.comments",
+    "metrics.shares"
+  ],
+  "confidence": 0.6,
+  "source_type": "capture_record",
+  "source_note": "capture-001",
+  "created_from": "analyze-captured-post"
+}

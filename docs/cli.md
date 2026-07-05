@@ -191,6 +191,35 @@ python3 -m app.cli.main show-capture-result \
 
 输出包含标题、正文、作者、互动数据、图片、视频、评论、已获得字段、缺失字段和 warnings。
 
+## 分析采集内容
+
+```bash
+python3 -m app.cli.main analyze-captured-post \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --capture-id capture-from-inbox-xxxx
+```
+
+该命令会生成结构化拆解结果：
+
+- 图文内容默认使用 `image_carousel_tutorial`。
+- 视频内容默认使用 `video_tutorial`。
+- 可见信息进入 `observable_facts`。
+- 推断信息进入各分析字段的 `inference`。
+- 缺失字段进入 `uncertainties`。
+- 公开互动数据只作为表现参考，不能解释为确定原因。
+
+Phase 9 不做 OCR、音频转写、关键帧抽取或真实多媒体处理。
+
+## 提升为对标内容
+
+```bash
+python3 -m app.cli.main promote-to-benchmark \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --inbox-item-id inbox-xxxx
+```
+
+该命令用于运营人员确认后，把已采集和拆解的素材提升为对标账号草稿和对标帖子草稿。它不会自动判断任意链接都是强对标；生成结果仍需要人工确认和修订。
+
 ## 生成规则卡片
 
 ```bash
@@ -314,6 +343,7 @@ Phase 7 后，真实样本验证会处理多篇对标帖，并在报告中补充
 - `creator-profiles`
 - `benchmark-accounts`
 - `benchmark-posts`
+- `benchmark-analyses`
 - `content-inbox`
 - `capture-records`
 - `custom-tags`

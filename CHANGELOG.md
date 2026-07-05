@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.0 - 2026-07-05
+
+Phase 9：采集内容结构化拆解与提升为对标。
+
+### Added
+
+- 新增 `BenchmarkAnalysis`，用于保存采集内容的事实、推断、不确定项、账号适配判断和候选规则引用。
+- 新增 `app.analysis` 分析模块，支持图文和视频使用不同分析模板。
+- 新增 CLI：`analyze-captured-post`、`promote-to-benchmark`。
+- 新增采集内容提升为 `BenchmarkAccount` 与 `BenchmarkPost` 的本地流程。
+- 新增 BenchmarkAnalysis 示例、集合目录和测试。
+
+### Changed
+
+- 采集内容现在可以先拆解，再由运营人员确认是否提升为正式对标样本。
+- 文档补充事实与推断分离、公开互动数据仅作表现参考、缺失项保留为不确定项的边界。
+
+### Boundaries
+
+- Phase 9 不做 OCR、音频转写、关键帧抽取或真实多媒体处理。
+- 不把公开互动数据解释为确定的爆款原因。
+- 不自动把任意链接变成强对标，提升为对标仍需要用户确认。
+
 ## 0.8.0 - 2026-07-05
 
 Phase 8：素材收件箱与指定链接采集。

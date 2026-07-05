@@ -7,11 +7,13 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Any, Sequence
 
+from app.analysis import analyze_capture
 from app.capture import build_capture_record
 from app.models.core import (
     MODEL_TYPES,
     BaseModel,
     BenchmarkAccount,
+    BenchmarkAnalysis,
     BenchmarkPost,
     CaptureRecord,
     ContentDraft,
@@ -137,6 +139,16 @@ def build_parser() -> argparse.ArgumentParser:
     show_capture_parser.add_argument("--workspace", required=True, help="Workspace directory.")
     show_capture_parser.add_argument("--capture-id", required=True, help="CaptureRecord id.")
     show_capture_parser.set_defaults(handler=handle_show_capture_result)
+
+    analyze_parser = subparsers.add_parser("analyze-captured-post", help="Analyze one captured post into structured dimensions.")
+    analyze_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    analyze_parser.add_argument("--capture-id", required=True, help="CaptureRecord id.")
+    analyze_parser.set_defaults(handler=handle_analyze_captured_post)
+
+    promote_parser = subparsers.add_parser("promote-to-benchmark", help="Promote one analyzed inbox item to benchmark account and post records.")
+    promote_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    promote_parser.add_argument("--inbox-item-id", required=True, help="ContentInboxItem id.")
+    promote_parser.set_defaults(handler=handle_promote_to_benchmark)
 
     rule_parser = subparsers.add_parser("generate-rule-cards", help="Generate local mock rule cards for one benchmark post.")
     rule_parser.add_argument("--workspace", required=True, help="Workspace directory.")
@@ -360,6 +372,99 @@ def handle_show_capture_result(args: argparse.Namespace) -> dict[str, Any]:
     return JsonRepository(workspace, CaptureRecord).read(args.capture_id).to_dict()
 
 
+def handle_analyze_captured_post(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    capture = JsonRepository(workspace, CaptureRecord).read(args.capture_id)
+    analysis = analyze_capture(capture)
+    saved = JsonRepository(workspace, BenchmarkAnalysis).upsert(analysis)
+    JsonRepository(workspace, ContentInboxItem).update(
+        capture.inbox_item_id,
+        {
+            "status": "analyzed",
+            "missing_fields": saved.uncertainties,
+            "confidence": saved.confidence,
+        },
+    )
+    return {
+        "analysis_id": saved.id,
+        "capture_id": saved.capture_id,
+        "analysis_template": saved.analysis_template,
+        "candidate_rule_ids": saved.candidate_rule_ids,
+        "uncertainties": saved.uncertainties,
+    }
+
+
+def handle_promote_to_benchmark(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    inbox_repo = JsonRepository(workspace, ContentInboxItem)
+    inbox_item = inbox_repo.read(args.inbox_item_id)
+    capture = find_capture_by_inbox_id(JsonRepository(workspace, CaptureRecord).list_all(), inbox_item.id)
+    if capture is None:
+        raise ValueError(f"No capture record found for inbox item: {inbox_item.id}")
+    analysis_repo = JsonRepository(workspace, BenchmarkAnalysis)
+    analysis = find_analysis_by_capture_id(analysis_repo.list_all(), capture.id)
+    if analysis is None:
+        analysis = analysis_repo.upsert(analyze_capture(capture))
+
+    account_id = f"benchmark-account-from-{inbox_item.id}"
+    post_id = f"benchmark-post-from-{inbox_item.id}"
+    author_name = str(capture.author.get("name") or "未知可见账号")
+    account = BenchmarkAccount(
+        id=account_id,
+        name=author_name,
+        url="",
+        niche="待人工确认",
+        reason_to_follow=inbox_item.user_reason or inbox_item.user_intent or "由素材收件箱提升为对标账号。",
+        learnable_points=analysis.transferable_elements or ["待人工确认"],
+        non_learnable_points=analysis.non_transferable_elements or ["待人工确认"],
+        tags=[],
+        summary="由单条采集内容自动生成的对标账号草稿，需要人工确认。",
+        source_type="capture_record",
+        source_note=capture.id,
+        created_from="promote-to-benchmark",
+        confidence=0.6,
+    )
+    post = BenchmarkPost(
+        id=post_id,
+        account_id=account.id,
+        title=capture.title or "待补充标题",
+        url=capture.source_url,
+        content_type=capture.content_type,
+        cover_text="",
+        raw_content=capture.body or "待补充正文",
+        metrics=capture.metrics,
+        tags=[],
+        ai_analysis=analysis.to_dict(),
+        borrowable_points=analysis.transferable_elements,
+        non_borrowable_points=analysis.non_transferable_elements,
+        rule_card_candidates=[
+            {
+                "id": candidate_id,
+                "source_id": analysis.id,
+                "evidence": analysis.observable_facts.get("title", ""),
+            }
+            for candidate_id in analysis.candidate_rule_ids
+        ],
+        missing_fields=capture.missing_fields,
+        source_type="capture_record",
+        source_note=capture.id,
+        user_reason=inbox_item.user_reason,
+        created_from="promote-to-benchmark",
+        confidence=analysis.confidence,
+    )
+    JsonRepository(workspace, BenchmarkAccount).upsert(account)
+    JsonRepository(workspace, BenchmarkPost).upsert(post)
+    analysis_repo.update(analysis.id, {"benchmark_post_id": post.id})
+    inbox_repo.update(inbox_item.id, {"status": "promoted_to_benchmark"})
+    return {
+        "benchmark_account_id": account.id,
+        "benchmark_post_id": post.id,
+        "analysis_id": analysis.id,
+    }
+
+
 def handle_generate_rule_cards(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
@@ -567,6 +672,20 @@ def count_feedback_issues(path: Path) -> int:
 def find_inbox_item_by_url(items: list[ContentInboxItem], url: str) -> ContentInboxItem | None:
     for item in items:
         if item.source_url == url:
+            return item
+    return None
+
+
+def find_capture_by_inbox_id(items: list[CaptureRecord], inbox_item_id: str) -> CaptureRecord | None:
+    for item in items:
+        if item.inbox_item_id == inbox_item_id:
+            return item
+    return None
+
+
+def find_analysis_by_capture_id(items: list[BenchmarkAnalysis], capture_id: str) -> BenchmarkAnalysis | None:
+    for item in items:
+        if item.capture_id == capture_id:
             return item
     return None
 

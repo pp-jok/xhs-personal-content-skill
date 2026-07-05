@@ -9,6 +9,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.models.core import (  # noqa: E402
     BenchmarkAccount,
+    BenchmarkAnalysis,
     BenchmarkPost,
     ContentDraft,
     CaptureRecord,
@@ -29,6 +30,7 @@ from app.repositories import JsonRepository, NotFoundError  # noqa: E402
 EXAMPLE_TO_MODEL = {
     "creator-profile.json": CreatorProfile,
     "benchmark-account.json": BenchmarkAccount,
+    "benchmark-analysis.json": BenchmarkAnalysis,
     "benchmark-post.json": BenchmarkPost,
     "content-inbox-item.json": ContentInboxItem,
     "capture-record.json": CaptureRecord,
@@ -106,11 +108,35 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(data["source_type"], "user_input")
 
     def test_collection_names_are_unique(self) -> None:
-        self.assertEqual(len(MODEL_TYPES), 12)
+        self.assertEqual(len(MODEL_TYPES), 13)
         self.assertEqual(MODEL_TYPES["creator-profiles"], CreatorProfile)
+        self.assertEqual(MODEL_TYPES["benchmark-analyses"], BenchmarkAnalysis)
         self.assertEqual(MODEL_TYPES["content-inbox"], ContentInboxItem)
         self.assertEqual(MODEL_TYPES["capture-records"], CaptureRecord)
         self.assertEqual(MODEL_TYPES["review-records"], ReviewRecord)
+
+    def test_benchmark_analysis_rejects_invalid_template(self) -> None:
+        with self.assertRaises(ValidationError):
+            BenchmarkAnalysis(
+                id="analysis-invalid",
+                capture_id="capture-001",
+                analysis_template="unknown",
+                observable_facts={"title": "标题"},
+                topic_analysis={},
+                title_analysis={},
+                cover_analysis={},
+                structure_analysis={},
+                visual_analysis={},
+                audio_analysis={},
+                comment_analysis={},
+                engagement_analysis={},
+                account_fit={},
+                transferable_elements=[],
+                non_transferable_elements=[],
+                candidate_rule_ids=[],
+                derived_topic_ids=[],
+                uncertainties=[],
+            )
 
     def test_content_inbox_item_rejects_invalid_status(self) -> None:
         with self.assertRaises(ValidationError):

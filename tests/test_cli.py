@@ -10,7 +10,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.cli.main import main  # noqa: E402
-from app.models.core import BenchmarkPost, CaptureRecord, ContentInboxItem, CreatorProfile, CustomTag, OwnPost  # noqa: E402
+from app.models.core import (  # noqa: E402
+    BenchmarkAccount,
+    BenchmarkAnalysis,
+    BenchmarkPost,
+    CaptureRecord,
+    ContentInboxItem,
+    CreatorProfile,
+    CustomTag,
+    OwnPost,
+)
 from app.repositories import JsonRepository  # noqa: E402
 
 
@@ -496,6 +505,53 @@ class CliTests(unittest.TestCase):
             self.assertEqual(item.status, "captured")
             self.assertEqual(item.content_type, "image")
 
+    def test_analyze_captured_post_uses_image_template_and_separates_facts_from_inferences(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            inbox_item, capture = self._seed_capture(data_dir, content_type="image")
+
+            output = self._run_cli(["analyze-captured-post", "--workspace", temp_dir, "--capture-id", capture.id])
+
+            self.assertTrue(output["ok"])
+            self.assertEqual(output["result"]["analysis_id"], f"analysis-from-{capture.id}")
+            self.assertEqual(output["result"]["analysis_template"], "image_carousel_tutorial")
+            analysis = JsonRepository(data_dir, BenchmarkAnalysis).read(output["result"]["analysis_id"])
+            self.assertEqual(analysis.capture_id, capture.id)
+            self.assertEqual(analysis.observable_facts["title"], capture.title)
+            self.assertIn("inference", analysis.title_analysis)
+            self.assertIn("metrics.comments", analysis.uncertainties)
+            item = JsonRepository(data_dir, ContentInboxItem).read(inbox_item.id)
+            self.assertEqual(item.status, "analyzed")
+
+    def test_analyze_captured_post_uses_video_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            _, capture = self._seed_capture(data_dir, content_type="video")
+
+            output = self._run_cli(["analyze-captured-post", "--workspace", temp_dir, "--capture-id", capture.id])
+
+            self.assertTrue(output["ok"])
+            self.assertEqual(output["result"]["analysis_template"], "video_tutorial")
+
+    def test_promote_to_benchmark_creates_account_post_and_links_analysis(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            inbox_item, capture = self._seed_capture(data_dir, content_type="image")
+            analysis_output = self._run_cli(["analyze-captured-post", "--workspace", temp_dir, "--capture-id", capture.id])
+
+            promoted = self._run_cli(["promote-to-benchmark", "--workspace", temp_dir, "--inbox-item-id", inbox_item.id])
+
+            self.assertTrue(promoted["ok"])
+            self.assertEqual(promoted["result"]["benchmark_post_id"], f"benchmark-post-from-{inbox_item.id}")
+            post = JsonRepository(data_dir, BenchmarkPost).read(promoted["result"]["benchmark_post_id"])
+            account = JsonRepository(data_dir, BenchmarkAccount).read(promoted["result"]["benchmark_account_id"])
+            analysis = JsonRepository(data_dir, BenchmarkAnalysis).read(analysis_output["result"]["analysis_id"])
+            item = JsonRepository(data_dir, ContentInboxItem).read(inbox_item.id)
+            self.assertEqual(post.title, capture.title)
+            self.assertEqual(post.account_id, account.id)
+            self.assertEqual(analysis.benchmark_post_id, post.id)
+            self.assertEqual(item.status, "promoted_to_benchmark")
+
     def _run_cli(self, args: list[str], expected_code: int = 0) -> dict:
         buffer = StringIO()
         with redirect_stdout(buffer):
@@ -546,6 +602,38 @@ class CliTests(unittest.TestCase):
                 weight=4,
             )
         )
+
+    def _seed_capture(self, data_dir: Path, content_type: str) -> tuple[ContentInboxItem, CaptureRecord]:
+        inbox_item = ContentInboxItem(
+            id=f"inbox-{content_type}",
+            source_url=f"https://www.xiaohongshu.com/explore/{content_type}",
+            status="captured",
+            capture_status="partial",
+            content_type=content_type,
+            user_intent="学习选题和结构",
+            requested_focus=["title", "structure"],
+        )
+        capture = CaptureRecord(
+            id=f"capture-{content_type}",
+            inbox_item_id=inbox_item.id,
+            source_url=inbox_item.source_url,
+            capture_method="manual",
+            capture_status="partial",
+            title="新手如何做清晰表达",
+            body="先讲对象，再讲问题，最后给一个具体做法。",
+            content_type=content_type,
+            author={"name": "可见账号"},
+            metrics={"likes": 12, "collects": 8, "comments": None, "shares": None},
+            images=[{"path": "screenshot.png", "alt": "首图"}] if content_type == "image" else [],
+            video={"duration_seconds": 35, "has_subtitle": True} if content_type == "video" else {},
+            comments=[{"content": "这个方法适合新人"}],
+            available_fields=["title", "body", "author", "metrics.likes", "metrics.collects"],
+            missing_fields=["metrics.comments", "metrics.shares"],
+            warnings=["评论数量不可见。"],
+        )
+        JsonRepository(data_dir, ContentInboxItem).create(inbox_item)
+        JsonRepository(data_dir, CaptureRecord).create(capture)
+        return inbox_item, capture
 
 
 if __name__ == "__main__":
