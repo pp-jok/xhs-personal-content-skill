@@ -107,7 +107,7 @@ D. 脚本结构
 When a user provides one Xiaohongshu link:
 
 1. Save the link into the content inbox first.
-2. Capture only user-visible or user-provided content.
+2. Capture only user-visible or user-provided content. Prefer the approved `capture-xhs-link --cdp-url` browser path when a dedicated Chrome debug session is available.
 3. If title, body, media, metrics, author, or comments are not available, mark them as missing.
 4. Do not infer missing metrics, comments, media, or account facts from the link alone.
 5. Ask the user to provide a screenshot, copied text, or the reason they like the post when content is incomplete.
@@ -248,7 +248,7 @@ Trigger examples:
 Action:
 
 1. Read account profile, tags, existing benchmark accounts/posts, and user preference feedback.
-2. If the user provides only a link, use `add-inbox-item`, then `capture-xhs-link`, and explain missing content plainly.
+2. If the user provides only a link, use `add-inbox-item`, then `capture-xhs-link --cdp-url http://127.0.0.1:9222` when the user has started the dedicated Chrome debug session. If browser capture fails, explain the diagnosis plainly and fall back to screenshot/copied text/manual file.
 3. When captured content exists, use `analyze-captured-post` to split observable facts, inferences, uncertainties, transferable elements, and non-transferable elements.
 4. Extract: title, cover text, raw content, content type, visible metrics, source account, user-stated reason, borrowable points, non-borrowable points, rule candidates.
 5. When the user provides an image, inspect it and transcribe only visible content. Do not invent missing text or metrics.
@@ -531,6 +531,7 @@ Write user-provided account and sample inputs:
 
 ```bash
 python3 -m app.cli add-inbox-item --workspace .xhs-personal-content-skill/real-sample --url https://www.xiaohongshu.com/explore/xxxx --user-intent "学习选题和结构"
+python3 -m app.cli capture-xhs-link --workspace .xhs-personal-content-skill/real-sample --inbox-item-id inbox-xxxx --cdp-url http://127.0.0.1:9222
 python3 -m app.cli capture-xhs-link --workspace .xhs-personal-content-skill/real-sample --inbox-item-id inbox-xxxx --manual-file /path/to/manual-capture.json
 python3 -m app.cli show-capture-result --workspace .xhs-personal-content-skill/real-sample --capture-id capture-from-inbox-xxxx
 python3 -m app.cli analyze-captured-post --workspace .xhs-personal-content-skill/real-sample --capture-id capture-from-inbox-xxxx

@@ -4,7 +4,7 @@
 
 当前版本适合找测试者验证核心闭环：录入账号信息，持续添加对标帖子，沉淀个人偏好与规则，再基于这些积累生成选题、草稿和验证报告。
 
-当前版本：`1.1.0`
+当前版本：`1.2.0`
 
 ## 核心价值
 
@@ -12,7 +12,7 @@
 - 对标样本沉淀：把对标账号和帖子拆成可借鉴点、不可借鉴点、风险和规则卡片。
 - 可调教偏好：用户可以持续反馈“太 AI”“这个标题可以”“以后不要这样写”，并写入规则。
 - 用户态引导：默认用账号运营助手的方式交流，少暴露文件、命令、JSON 和内部流程。
-- 本地可控：只处理用户主动提供的单个链接和可见内容，不批量抓取平台，不自动发布，不调用外部模型 API，不依赖复杂数据库。
+- 本地可控：只处理用户主动提供的单个链接和用户授权 Chrome 中当前可见内容，不批量抓取平台，不自动发布，不调用外部模型 API，不依赖复杂数据库。
 - 可验证闭环：提供 CLI、模板、样例和真实样本验证报告，便于多人测试和迭代。
 
 ## 当前功能
@@ -38,6 +38,7 @@
 - 真实样本验证命令与人工评价表。
 - 工作区 CLI：初始化、账号档案、对标账号、对标帖子、标签、反馈、校验、规则、选题、草稿、发布任务和复盘。
 - 单链接素材收件箱：保存用户主动提供的小红书链接，支持去重、采集状态和缺失字段记录。
+- 用户授权 Chrome 采集：通过 Playwright CDP 连接用户主动启动的专用 Chrome，读取单个链接当前可见内容。
 - 采集内容拆解：把可见内容拆成事实、推断、不确定项、账号适配判断和候选规则引用。
 - 提升为对标：运营人员确认后，可把采集内容提升为对标账号和对标帖子草稿。
 - 规则生命周期：候选、确认、测试、验证、拒绝、废弃，并保留证据和验证次数。
@@ -80,9 +81,31 @@ cp -R xhs-personal-content-skill ~/.codex/skills/xhs-personal-content-skill
 
 ```bash
 cd xhs-personal-content-skill
+python3 -m pip install -r requirements.txt
 python3 -m unittest discover -s tests
 PYTHONPYCACHEPREFIX=.pycache python3 -m compileall -q app tests
 ```
+
+## 启动专用 Chrome 采集单个链接
+
+首次使用时，先启动专用 Chrome，并在该浏览器中自行登录小红书：
+
+```bash
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+  --remote-debugging-port=9222 \
+  --user-data-dir="$HOME/.xhs-personal-content-skill/chrome-profile"
+```
+
+采集用户主动提交的单个链接：
+
+```bash
+python3 -m app.cli.main capture-xhs-link \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --inbox-item-id inbox-xxxx \
+  --cdp-url http://127.0.0.1:9222
+```
+
+该能力只读取当前可见内容，不绕过登录、验证码或访问限制。`--manual-file` 仍保留为失败后的降级导入方式。
 
 运行样例闭环：
 

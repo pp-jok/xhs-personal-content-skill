@@ -66,11 +66,11 @@
 
 用途：记录单个链接当前可见内容的标准化采集结果。
 
-字段：`id`、`inbox_item_id`、`source_url`、`capture_method`、`capture_status`、`captured_at`、`title`、`body`、`content_type`、`author`、`metrics`、`images`、`video`、`comments`、`available_fields`、`missing_fields`、`warnings`、`raw_snapshot_path`。
+字段：`id`、`inbox_item_id`、`source_url`、`canonical_url`、`capture_method`、`capture_status`、`captured_at`、`published_at`、`title`、`body`、`content_type`、`author`、`metrics`、`images`、`video`、`comments`、`available_fields`、`missing_fields`、`warnings`、`raw_snapshot_path`、`diagnostics`。
 
-基础校验：所属收件箱条目和链接不能为空；采集方式必须是 `manual` 或 `browser_authorized`；采集状态必须是 `pending`、`success`、`partial`、`failed` 之一；互动数据必须是对象，缺失值用 `null`，不能用 `0` 伪造。
+基础校验：所属收件箱条目和链接不能为空；采集方式必须是 `manual` 或 `browser_authorized`；采集状态必须是 `pending`、`success`、`partial`、`failed` 之一；互动数据和诊断信息必须是对象，缺失值用 `null`，不能用 `0` 伪造。
 
-说明：采集不到完整内容时必须记录缺失字段和 warning，不允许补造标题、正文、指标或评论。
+说明：采集不到完整内容时必须记录缺失字段、warning 和 diagnostics，不允许补造标题、正文、指标或评论。浏览器采集只读取用户授权 Chrome 中的单个链接当前可见内容。
 
 ## BenchmarkAnalysis
 

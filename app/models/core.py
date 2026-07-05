@@ -262,9 +262,11 @@ class CaptureRecord(BaseModel):
 
     inbox_item_id: str = ""
     source_url: str = ""
+    canonical_url: str = ""
     capture_method: CaptureMethod = "manual"
     capture_status: CaptureStatus = "partial"
     captured_at: str = field(default_factory=now_iso)
+    published_at: str | None = None
     title: str = ""
     body: str = ""
     content_type: CapturedContentType = "unknown"
@@ -276,13 +278,16 @@ class CaptureRecord(BaseModel):
     available_fields: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     raw_snapshot_path: str = ""
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def validate(self) -> None:
         require_text(self.inbox_item_id, "inbox_item_id")
         require_text(self.source_url, "source_url")
+        ensure_optional_text(self.canonical_url, "canonical_url")
         require_literal(self.capture_method, CaptureMethod, "capture_method")
         require_literal(self.capture_status, CaptureStatus, "capture_status")
         require_text(self.captured_at, "captured_at")
+        ensure_optional_text(self.published_at, "published_at")
         ensure_optional_text(self.title, "title")
         ensure_optional_text(self.body, "body")
         require_literal(self.content_type, CapturedContentType, "content_type")
@@ -298,6 +303,7 @@ class CaptureRecord(BaseModel):
         ensure_list_items_are_text(self.available_fields, "available_fields")
         ensure_list_items_are_text(self.warnings, "warnings")
         ensure_optional_text(self.raw_snapshot_path, "raw_snapshot_path")
+        require_dict(self.diagnostics, "diagnostics")
 
 
 @dataclass

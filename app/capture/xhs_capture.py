@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.capture.capture_errors import CaptureInputError
+from app.capture.browser import BrowserCaptureResult
 from app.capture.capture_result import NormalizedCaptureInput
 from app.models.core import CaptureRecord, ContentInboxItem, now_iso
 
@@ -21,6 +22,7 @@ def build_capture_record(
             id=capture_id or f"capture-from-{inbox_item.id}",
             inbox_item_id=inbox_item.id,
             source_url=inbox_item.source_url,
+            canonical_url=inbox_item.source_url,
             capture_method="browser_authorized",
             capture_status="failed",
             content_type="unknown",
@@ -28,6 +30,7 @@ def build_capture_record(
             available_fields=[],
             missing_fields=["title", "body", "author", "metrics", "images", "video", "comments"],
             warnings=["未提供可见页面内容；本地工具不会绕过登录、验证码、风控或访问限制。"],
+            diagnostics={"page_reachable": False, "error_code": "cdp_url_missing"},
             confidence=0.0,
             created_from="capture-xhs-link",
         )
@@ -44,6 +47,7 @@ def build_capture_record(
         id=capture_id or f"capture-from-{inbox_item.id}",
         inbox_item_id=inbox_item.id,
         source_url=inbox_item.source_url,
+        canonical_url=inbox_item.source_url,
         capture_method="manual",
         capture_status=status,
         captured_at=now_iso(),
@@ -59,8 +63,42 @@ def build_capture_record(
         missing_fields=missing_fields,
         warnings=warnings,
         raw_snapshot_path=normalized.raw_snapshot_path,
+        diagnostics={},
         confidence=0.9 if status == "success" else 0.6,
         source_type="user_visible_manual_capture",
+        created_from="capture-xhs-link",
+    )
+
+
+def build_browser_capture_record(
+    inbox_item: ContentInboxItem,
+    browser_result: BrowserCaptureResult,
+    capture_id: str | None = None,
+) -> CaptureRecord:
+    return CaptureRecord(
+        id=capture_id or f"capture-from-{inbox_item.id}",
+        inbox_item_id=inbox_item.id,
+        source_url=browser_result.source_url or inbox_item.source_url,
+        canonical_url=browser_result.canonical_url,
+        capture_method="browser_authorized",
+        capture_status=browser_result.capture_status,
+        captured_at=now_iso(),
+        published_at=browser_result.published_at,
+        title=browser_result.title,
+        body=browser_result.body,
+        content_type=browser_result.content_type,
+        author=browser_result.author,
+        metrics=browser_result.metrics,
+        images=browser_result.images,
+        video=browser_result.video,
+        comments=browser_result.comments,
+        available_fields=browser_result.available_fields,
+        missing_fields=browser_result.missing_fields,
+        warnings=browser_result.warnings,
+        raw_snapshot_path=browser_result.raw_snapshot_path,
+        diagnostics=browser_result.diagnostics,
+        confidence=0.85 if browser_result.capture_status == "success" else 0.45,
+        source_type="browser_authorized_capture",
         created_from="capture-xhs-link",
     )
 
