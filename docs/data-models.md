@@ -128,6 +128,16 @@
 
 基础校验：所属选题和脚本不能为空；标题、封面文案、分镜建议和标签必须是字符串列表；质量检查必须是对象。
 
+## ContentQualityReview
+
+用途：记录草稿或发布前后的人工质量评价，用于判断 Skill 是否真的越来越懂当前账号。
+
+字段：`id`、`draft_id`、`review_type`、`account_fit_score`、`publishability_score`、`title_score`、`cover_score`、`structure_score`、`tone_score`、`revision_count`、`major_rewrite_required`、`issues`、`accepted_rules`、`rejected_rules`、`reviewer_notes`。
+
+基础校验：所属草稿不能为空；`review_type` 必须是 `pre_publish`、`post_publish`、`revision` 之一；各项评分必须是 0 到 5 的整数；修改次数不能为负数；`issues` 必须是对象列表；规则引用必须是字符串列表。
+
+说明：它不评价“生成了多少”，而评价“是否少改、是否像这个账号、是否可发布”。`issues` 建议记录问题区域，例如 `title`、`cover`、`script`、`tone`，以及后续动作，例如 `rewrite`、`keep`、`avoid`。
+
 ## PublishTask
 
 用途：把草稿转为发布任务，并为未来多账号扩展保留 `account_id`。

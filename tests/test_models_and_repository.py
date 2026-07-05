@@ -11,6 +11,7 @@ from app.models.core import (  # noqa: E402
     BenchmarkAccount,
     BenchmarkAnalysis,
     BenchmarkPost,
+    ContentQualityReview,
     ContentDraft,
     CaptureRecord,
     ContentInboxItem,
@@ -40,6 +41,7 @@ EXAMPLE_TO_MODEL = {
     "rule-evidence.json": RuleEvidence,
     "topic-item.json": TopicItem,
     "content-draft.json": ContentDraft,
+    "content-quality-review.json": ContentQualityReview,
     "publish-task.json": PublishTask,
     "own-post.json": OwnPost,
     "review-record.json": ReviewRecord,
@@ -110,13 +112,28 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(data["source_type"], "user_input")
 
     def test_collection_names_are_unique(self) -> None:
-        self.assertEqual(len(MODEL_TYPES), 14)
+        self.assertEqual(len(MODEL_TYPES), 15)
         self.assertEqual(MODEL_TYPES["creator-profiles"], CreatorProfile)
         self.assertEqual(MODEL_TYPES["benchmark-analyses"], BenchmarkAnalysis)
         self.assertEqual(MODEL_TYPES["content-inbox"], ContentInboxItem)
+        self.assertEqual(MODEL_TYPES["content-quality-reviews"], ContentQualityReview)
         self.assertEqual(MODEL_TYPES["capture-records"], CaptureRecord)
         self.assertEqual(MODEL_TYPES["rule-evidence"], RuleEvidence)
         self.assertEqual(MODEL_TYPES["review-records"], ReviewRecord)
+
+    def test_content_quality_review_rejects_score_out_of_range(self) -> None:
+        with self.assertRaises(ValidationError):
+            ContentQualityReview(
+                id="quality-invalid",
+                draft_id="draft-001",
+                review_type="pre_publish",
+                account_fit_score=6,
+                publishability_score=3,
+                title_score=3,
+                cover_score=3,
+                structure_score=3,
+                tone_score=3,
+            )
 
     def test_rule_card_accepts_lifecycle_fields(self) -> None:
         rule = RuleCard(

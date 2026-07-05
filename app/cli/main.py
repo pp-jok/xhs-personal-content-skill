@@ -18,6 +18,7 @@ from app.models.core import (
     CaptureRecord,
     ContentDraft,
     ContentInboxItem,
+    ContentQualityReview,
     CreatorProfile,
     CustomTag,
     OwnPost,
@@ -29,6 +30,7 @@ from app.models.core import (
     now_iso,
 )
 from app.repositories import JsonRepository
+from app.quality import build_quality_report
 from app.rules import build_rule_and_evidence_from_analysis, check_rule_relations
 from app.services.mock_prompt_service import MockPromptService
 from app.services.prompt_contracts import load_contracts
@@ -191,6 +193,16 @@ def build_parser() -> argparse.ArgumentParser:
     relation_parser = subparsers.add_parser("check-rule-relations", help="Detect duplicate, context-different, and conflicting rules.")
     relation_parser.add_argument("--workspace", required=True, help="Workspace directory.")
     relation_parser.set_defaults(handler=handle_check_rule_relations)
+
+    quality_review_parser = subparsers.add_parser("add-quality-review", help="Add one content quality review.")
+    quality_review_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    quality_review_parser.add_argument("--file", required=True, help="Content quality review JSON file.")
+    quality_review_parser.set_defaults(handler=handle_add_quality_review)
+
+    quality_report_parser = subparsers.add_parser("generate-quality-report", help="Generate a local quality trend report.")
+    quality_report_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    quality_report_parser.add_argument("--period", default="weekly", choices=("weekly", "monthly"), help="Report period.")
+    quality_report_parser.set_defaults(handler=handle_generate_quality_report)
 
     rule_parser = subparsers.add_parser("generate-rule-cards", help="Generate local mock rule cards for one benchmark post.")
     rule_parser.add_argument("--workspace", required=True, help="Workspace directory.")
@@ -568,6 +580,39 @@ def handle_check_rule_relations(args: argparse.Namespace) -> dict[str, Any]:
     ensure_workspace_dirs(workspace)
     rules = JsonRepository(workspace, RuleCard).list_all()
     return check_rule_relations(rules)
+
+
+def handle_add_quality_review(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    data = read_json_object(Path(args.file), "content quality review")
+    review = ContentQualityReview.from_dict(data)
+    saved = JsonRepository(workspace, ContentQualityReview).upsert(review)
+    draft_repo = JsonRepository(workspace, ContentDraft)
+    draft = draft_repo.read(saved.draft_id)
+    quality_summary = dict(draft.quality_review)
+    quality_summary.update(
+        {
+            "latest_review_id": saved.id,
+            "account_fit_score": saved.account_fit_score,
+            "publishability_score": saved.publishability_score,
+            "major_rewrite_required": saved.major_rewrite_required,
+        }
+    )
+    draft_repo.update(draft.id, {"quality_review": quality_summary})
+    return {"id": saved.id, "draft_id": saved.draft_id, "major_rewrite_required": saved.major_rewrite_required}
+
+
+def handle_generate_quality_report(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    reviews = JsonRepository(workspace, ContentQualityReview).list_all()
+    rules = JsonRepository(workspace, RuleCard).list_all()
+    metrics, report = build_quality_report(args.period, reviews, rules)
+    report_path = workspace / "reports" / f"quality_report_{args.period}.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(report, encoding="utf-8")
+    return {"period": args.period, "report_path": str(report_path), "metrics": metrics}
 
 
 def handle_generate_rule_cards(args: argparse.Namespace) -> dict[str, Any]:

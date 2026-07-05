@@ -24,6 +24,7 @@ RuleStrength = Literal["weak", "medium", "strong"]
 RuleEvidenceSourceType = Literal["benchmark_post", "benchmark_analysis", "user_feedback", "own_post", "review_record"]
 ContentStatus = Literal["idea", "draft", "reviewing", "ready", "archived"]
 PublishStatus = Literal["planned", "preparing", "ready", "published", "cancelled"]
+QualityReviewType = Literal["pre_publish", "post_publish", "revision"]
 InboxStatus = Literal["inbox", "capturing", "captured", "analyzed", "promoted_to_benchmark", "rejected", "archived"]
 CaptureStatus = Literal["pending", "success", "partial", "failed"]
 CaptureMethod = Literal["manual", "browser_authorized"]
@@ -84,6 +85,11 @@ def ensure_optional_text(value: str | None, field_name: str) -> None:
 def ensure_non_negative_int(value: int, field_name: str) -> None:
     if not isinstance(value, int) or value < 0:
         raise ValidationError(f"{field_name} must be a non-negative integer")
+
+
+def ensure_score(value: int, field_name: str) -> None:
+    if not isinstance(value, int) or not 0 <= value <= 5:
+        raise ValidationError(f"{field_name} must be an integer from 0 to 5")
 
 
 @dataclass
@@ -478,6 +484,45 @@ class ContentDraft(BaseModel):
 
 
 @dataclass
+class ContentQualityReview(BaseModel):
+    collection_name: ClassVar[str] = "content-quality-reviews"
+
+    draft_id: str = ""
+    review_type: QualityReviewType = "pre_publish"
+    account_fit_score: int = 0
+    publishability_score: int = 0
+    title_score: int = 0
+    cover_score: int = 0
+    structure_score: int = 0
+    tone_score: int = 0
+    revision_count: int = 0
+    major_rewrite_required: bool = False
+    issues: list[dict[str, Any]] = field(default_factory=list)
+    accepted_rules: list[str] = field(default_factory=list)
+    rejected_rules: list[str] = field(default_factory=list)
+    reviewer_notes: str = ""
+
+    def validate(self) -> None:
+        require_text(self.draft_id, "draft_id")
+        require_literal(self.review_type, QualityReviewType, "review_type")
+        ensure_score(self.account_fit_score, "account_fit_score")
+        ensure_score(self.publishability_score, "publishability_score")
+        ensure_score(self.title_score, "title_score")
+        ensure_score(self.cover_score, "cover_score")
+        ensure_score(self.structure_score, "structure_score")
+        ensure_score(self.tone_score, "tone_score")
+        ensure_non_negative_int(self.revision_count, "revision_count")
+        if not isinstance(self.major_rewrite_required, bool):
+            raise ValidationError("major_rewrite_required must be a boolean")
+        require_list(self.issues, "issues")
+        for issue in self.issues:
+            require_dict(issue, "issues item")
+        ensure_list_items_are_text(self.accepted_rules, "accepted_rules")
+        ensure_list_items_are_text(self.rejected_rules, "rejected_rules")
+        ensure_optional_text(self.reviewer_notes, "reviewer_notes")
+
+
+@dataclass
 class PublishTask(BaseModel):
     collection_name: ClassVar[str] = "publish-tasks"
 
@@ -563,6 +608,7 @@ MODEL_TYPES: dict[str, type[BaseModel]] = {
         RuleEvidence,
         TopicItem,
         ContentDraft,
+        ContentQualityReview,
         PublishTask,
         OwnPost,
         ReviewRecord,

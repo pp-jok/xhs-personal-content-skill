@@ -1,6 +1,6 @@
 ---
 name: xhs-personal-content-skill
-description: Use when the user wants to operate a single Xiaohongshu creator account over time: record account profile, add benchmark accounts/posts, tag preferences, analyze benchmark content, extract rule cards, generate topic ideas, draft titles/cover text/video scripts, create publish tasks, review posted content, or validate real samples. Trigger on phrases such as 小红书账号运营, 小红书 Skill, 添加对标帖, 分析对标账号, 生成选题, 生成草稿, 创建发布任务, 复盘内容, 更新我的偏好, 真实样本验证.
+description: Use when the user wants to operate a single Xiaohongshu creator account over time: record account profile, add benchmark accounts/posts, tag preferences, analyze benchmark content, extract rule cards, generate topic ideas, draft titles/cover text/video scripts, create publish tasks, review posted content, record content quality reviews, generate quality reports, or validate real samples. Trigger on phrases such as 小红书账号运营, 小红书 Skill, 添加对标帖, 分析对标账号, 生成选题, 生成草稿, 创建发布任务, 复盘内容, 更新我的偏好, 质量评价, 质量报告, 真实样本验证.
 ---
 
 # 小红书个人账号内容运营 Skill
@@ -274,6 +274,7 @@ Trigger examples:
 - “跑一下验证”
 - “真实样本验证”
 - “看看现在结果怎么样”
+- “生成本周质量报告”
 
 Action:
 
@@ -294,7 +295,45 @@ In the normal reply, hide command output and file paths. Present a short validat
 
 Before full validation, use `validate-workspace` to check whether minimum inputs exist. If required inputs are missing, explain the missing business information instead of showing file names.
 
-### 5. 生成选题 / 草稿 / 发布任务
+### 5. 记录质量评价 / 生成质量报告
+
+Trigger examples:
+
+- “记录这篇草稿的质量评价”
+- “这个草稿账号适配 4 分，可发布 3 分”
+- “生成本周质量报告”
+- “这周内容质量有没有变好”
+
+Action for quality review:
+
+1. Read the selected draft, account profile, rules, and existing quality reviews.
+2. Extract scores: account fit, publishability, title, cover, structure, tone.
+3. Extract revision count, whether major rewrite is required, issues, accepted rules, rejected rules, and reviewer notes.
+4. If the user only gives a natural-language judgment, save what is clear and ask for at most 3 missing ratings.
+5. Use `add-quality-review` when writing a structured review payload.
+6. Reply with: which part is usable, which part caused modification cost, and how this will affect future rules.
+
+Action for quality report:
+
+1. Read content quality reviews and rule cards.
+2. Use `generate-quality-report --period weekly` unless the user asks for another period.
+3. Summarize first-pass rate, average revision count, major rewrite rate, account fit, publishability, title/script rewrite rate, rule hit rate, and rule validation success rate.
+4. Explain which rules are effective, which rules are weak, what patterns were repeatedly rejected, whether modification cost decreased, and what sample to collect next.
+5. Do not use generation count as proof of quality.
+
+Normal reply shape:
+
+```text
+本周质量报告已整理。
+
+目前最有用的规则是：...
+需要调整的是：...
+修改成本的变化：...
+
+下一轮建议补 3 篇同类对标帖，并继续记录草稿修改原因。
+```
+
+### 6. 生成选题 / 草稿 / 发布任务
 
 Trigger examples:
 
@@ -317,7 +356,7 @@ For drafts:
 3. Avoid forbidden expressions and generic content advice.
 4. Say whether the draft is ready to try, needs human edits, or needs more samples.
 
-### 6. 更新偏好和规则
+### 7. 更新偏好和规则
 
 Trigger examples:
 
@@ -353,7 +392,7 @@ Rule lifecycle:
 
 Do not auto-delete conflicting rules. Explain conflicts and ask the user to choose.
 
-### 7. 复盘已发布内容
+### 8. 复盘已发布内容
 
 Trigger examples:
 
@@ -368,7 +407,7 @@ Action:
 4. Convert lessons into rule updates or feedback issues.
 5. Reply with: what to keep, what to avoid next time, which rule changed, and next content suggestion.
 
-### 8. 初始化账号工作区
+### 9. 初始化账号工作区
 
 Trigger examples:
 
@@ -383,7 +422,7 @@ Action:
 3. Ask the user for the five account foundation fields: positioning, target audience, style, forbidden expressions, near-term goal.
 4. If the user already provided some of these fields, save them first and ask only for the missing parts.
 
-### 9. 创建发布任务
+### 10. 创建发布任务
 
 Trigger examples:
 
@@ -506,6 +545,8 @@ python3 -m app.cli add-benchmark-account --workspace .xhs-personal-content-skill
 python3 -m app.cli add-benchmark-post --workspace .xhs-personal-content-skill/real-sample --file /path/to/benchmark_post.json
 python3 -m app.cli add-custom-tags --workspace .xhs-personal-content-skill/real-sample --file /path/to/custom_tags.json
 python3 -m app.cli add-feedback --workspace .xhs-personal-content-skill/real-sample --file /path/to/validation_feedback.json
+python3 -m app.cli add-quality-review --workspace .xhs-personal-content-skill/real-sample --file /path/to/content_quality_review.json
+python3 -m app.cli generate-quality-report --workspace .xhs-personal-content-skill/real-sample --period weekly
 ```
 
 Generate structured local artifacts for pipeline validation:

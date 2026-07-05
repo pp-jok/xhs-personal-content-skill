@@ -16,7 +16,9 @@ from app.models.core import (  # noqa: E402
     BenchmarkAnalysis,
     BenchmarkPost,
     CaptureRecord,
+    ContentDraft,
     ContentInboxItem,
+    ContentQualityReview,
     CreatorProfile,
     CustomTag,
     OwnPost,
@@ -633,6 +635,110 @@ class CliTests(unittest.TestCase):
             self.assertIn([first.id, third.id], conflict_pairs)
             self.assertNotIn([first.id, second.id], conflict_pairs)
 
+    def test_add_quality_review_creates_review_and_updates_draft_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_draft_and_rules_for_quality(data_dir)
+            review_file = Path(temp_dir) / "quality-review.json"
+            review_file.write_text(
+                json.dumps(
+                    {
+                        "id": "quality-review-001",
+                        "draft_id": "draft-quality-001",
+                        "review_type": "pre_publish",
+                        "account_fit_score": 4,
+                        "publishability_score": 3,
+                        "title_score": 2,
+                        "cover_score": 4,
+                        "structure_score": 3,
+                        "tone_score": 4,
+                        "revision_count": 2,
+                        "major_rewrite_required": True,
+                        "issues": [
+                            {"area": "title", "problem": "标题太模板", "action": "重写标题"},
+                            {"area": "script", "problem": "脚本不够口语", "action": "重写口播"},
+                        ],
+                        "accepted_rules": ["rule-validated"],
+                        "rejected_rules": ["rule-weak"],
+                        "reviewer_notes": "需要大改标题。",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            output = self._run_cli(["add-quality-review", "--workspace", temp_dir, "--file", str(review_file)])
+
+            self.assertTrue(output["ok"])
+            self.assertEqual(output["result"]["id"], "quality-review-001")
+            review = JsonRepository(data_dir, ContentQualityReview).read("quality-review-001")
+            draft = JsonRepository(data_dir, ContentDraft).read("draft-quality-001")
+            self.assertEqual(review.title_score, 2)
+            self.assertEqual(draft.quality_review["latest_review_id"], "quality-review-001")
+
+    def test_generate_quality_report_outputs_quality_metrics_not_just_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_draft_and_rules_for_quality(data_dir)
+            JsonRepository(data_dir, ContentQualityReview).create(
+                ContentQualityReview(
+                    id="quality-review-001",
+                    draft_id="draft-quality-001",
+                    review_type="pre_publish",
+                    account_fit_score=5,
+                    publishability_score=4,
+                    title_score=4,
+                    cover_score=4,
+                    structure_score=4,
+                    tone_score=5,
+                    revision_count=0,
+                    major_rewrite_required=False,
+                    issues=[],
+                    accepted_rules=["rule-validated"],
+                    rejected_rules=[],
+                    reviewer_notes="小改可用。",
+                )
+            )
+            JsonRepository(data_dir, ContentQualityReview).create(
+                ContentQualityReview(
+                    id="quality-review-002",
+                    draft_id="draft-quality-002",
+                    review_type="pre_publish",
+                    account_fit_score=2,
+                    publishability_score=2,
+                    title_score=1,
+                    cover_score=3,
+                    structure_score=2,
+                    tone_score=2,
+                    revision_count=3,
+                    major_rewrite_required=True,
+                    issues=[
+                        {"area": "title", "problem": "标题重写", "action": "重写标题"},
+                        {"area": "script", "problem": "脚本重写", "action": "重写脚本"},
+                    ],
+                    accepted_rules=[],
+                    rejected_rules=["rule-weak"],
+                    reviewer_notes="需要大改。",
+                )
+            )
+
+            output = self._run_cli(["generate-quality-report", "--workspace", temp_dir, "--period", "weekly"])
+
+            self.assertTrue(output["ok"])
+            metrics = output["result"]["metrics"]
+            self.assertEqual(metrics["review_count"], 2)
+            self.assertEqual(metrics["first_pass_rate"], 0.5)
+            self.assertEqual(metrics["average_revision_count"], 1.5)
+            self.assertEqual(metrics["major_rewrite_rate"], 0.5)
+            self.assertEqual(metrics["title_rewrite_rate"], 0.5)
+            self.assertEqual(metrics["script_rewrite_rate"], 0.5)
+            self.assertEqual(metrics["rule_hit_rate"], 0.5)
+            self.assertEqual(metrics["rule_validation_success_rate"], 0.5)
+            report = (data_dir / "reports" / "quality_report_weekly.md").read_text(encoding="utf-8")
+            self.assertIn("一次通过率", report)
+            self.assertIn("平均修改轮次", report)
+            self.assertIn("表现差的规则", report)
+
     def _run_cli(self, args: list[str], expected_code: int = 0) -> dict:
         buffer = StringIO()
         with redirect_stdout(buffer):
@@ -736,6 +842,66 @@ class CliTests(unittest.TestCase):
         )
         JsonRepository(data_dir, RuleCard).create(rule)
         return rule
+
+    def _seed_draft_and_rules_for_quality(self, data_dir: Path) -> None:
+        JsonRepository(data_dir, ContentDraft).create(
+            ContentDraft(
+                id="draft-quality-001",
+                topic_id="topic-quality-001",
+                titles=["给新手的表达方法"],
+                cover_titles=["新手表达"],
+                script="先说问题，再给方法。",
+                shot_suggestions=["正面口播"],
+                status="draft",
+            )
+        )
+        JsonRepository(data_dir, ContentDraft).create(
+            ContentDraft(
+                id="draft-quality-002",
+                topic_id="topic-quality-002",
+                titles=["表达误区"],
+                cover_titles=["表达误区"],
+                script="列出三个误区。",
+                shot_suggestions=["字幕口播"],
+                status="draft",
+            )
+        )
+        JsonRepository(data_dir, RuleCard).create(
+            RuleCard(
+                id="rule-validated",
+                name="已验证规则",
+                type="title",
+                source_ids=["benchmark-post-001"],
+                applicable_scenarios=["图文标题"],
+                rule_summary="标题包含具体对象。",
+                examples=["给职场新人的表达方法"],
+                risks=["对象不能太宽。"],
+                adaptation_notes="适合当前账号。",
+                status="validated",
+                strength="strong",
+                validation_count=4,
+                success_count=3,
+                failure_count=1,
+            )
+        )
+        JsonRepository(data_dir, RuleCard).create(
+            RuleCard(
+                id="rule-weak",
+                name="表现差规则",
+                type="script",
+                source_ids=["benchmark-post-002"],
+                applicable_scenarios=["口播脚本"],
+                rule_summary="脚本使用强情绪开头。",
+                examples=["你一定不知道"],
+                risks=["容易像营销号。"],
+                adaptation_notes="当前账号不稳定。",
+                status="testing",
+                strength="weak",
+                validation_count=2,
+                success_count=0,
+                failure_count=2,
+            )
+        )
 
 
 if __name__ == "__main__":

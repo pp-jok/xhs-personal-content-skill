@@ -1,0 +1,28 @@
+{
+  "id": "quality-review-001",
+  "draft_id": "draft-from-benchmark-post-001-1",
+  "review_type": "pre_publish",
+  "account_fit_score": 4,
+  "publishability_score": 3,
+  "title_score": 3,
+  "cover_score": 4,
+  "structure_score": 3,
+  "tone_score": 4,
+  "revision_count": 1,
+  "major_rewrite_required": false,
+  "issues": [
+    {
+      "area": "title",
+      "problem": "标题还可以更像真人经验。",
+      "action": "弱化模板感"
+    }
+  ],
+  "accepted_rules": [
+    "rule-card-001"
+  ],
+  "rejected_rules": [],
+  "reviewer_notes": "小改后可用。",
+  "confidence": 0.8,
+  "source_type": "human_review",
+  "created_from": "manual-example"
+}
