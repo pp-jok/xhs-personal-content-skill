@@ -6,11 +6,13 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 from typing import Optional
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.cli.main import main  # noqa: E402
+from app.capture.browser import BrowserCaptureResult  # noqa: E402
 from app.models.core import (  # noqa: E402
     BenchmarkAccount,
     BenchmarkAnalysis,
@@ -450,6 +452,62 @@ class CliTests(unittest.TestCase):
             self.assertEqual(record.capture_status, "failed")
             item = JsonRepository(Path(temp_dir), ContentInboxItem).read(inbox["result"]["id"])
             self.assertEqual(item.capture_status, "failed")
+
+    def test_capture_xhs_link_with_cdp_url_records_browser_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            inbox = self._run_cli(
+                [
+                    "add-inbox-item",
+                    "--workspace",
+                    temp_dir,
+                    "--url",
+                    "https://www.xiaohongshu.com/explore/test-note?debug_param=redacted",
+                    "--user-intent",
+                    "学习标题",
+                ]
+            )
+            browser_result = BrowserCaptureResult(
+                source_url="https://www.xiaohongshu.com/explore/test-note?debug_param=redacted",
+                canonical_url="https://www.xiaohongshu.com/explore/test-note",
+                capture_status="success",
+                title="真实浏览器标题",
+                body="真实浏览器正文",
+                content_type="image",
+                author={"name": "浏览器作者"},
+                published_at="2026-07-05T12:00:00+08:00",
+                metrics={"likes": 12, "collects": 8, "comments": 3, "shares": 1},
+                images=[{"remote_url": "https://example.test/image.jpg", "download_status": "not_attempted"}],
+                video={},
+                comments=[{"content": "可见评论"}],
+                available_fields=["title", "body", "author", "images"],
+                missing_fields=[],
+                warnings=[],
+                raw_snapshot_path=str(Path(temp_dir) / "captures" / "capture-from-inbox" / "page.html"),
+                diagnostics={"page_reachable": True, "selectors_succeeded": ["title"], "selectors_failed": []},
+            )
+
+            with patch("app.cli.main.capture_xhs_link_with_browser", return_value=browser_result) as browser_capture:
+                capture = self._run_cli(
+                    [
+                        "capture-xhs-link",
+                        "--workspace",
+                        temp_dir,
+                        "--inbox-item-id",
+                        inbox["result"]["id"],
+                        "--cdp-url",
+                        "http://127.0.0.1:9222",
+                    ]
+                )
+
+            self.assertTrue(capture["ok"])
+            self.assertEqual(capture["result"]["capture_status"], "success")
+            browser_capture.assert_called_once()
+            record = JsonRepository(Path(temp_dir), CaptureRecord).read(capture["result"]["capture_id"])
+            self.assertEqual(record.capture_method, "browser_authorized")
+            self.assertEqual(record.title, "真实浏览器标题")
+            self.assertEqual(record.canonical_url, "https://www.xiaohongshu.com/explore/test-note")
+            self.assertEqual(record.published_at, "2026-07-05T12:00:00+08:00")
+            self.assertTrue(record.diagnostics["page_reachable"])
 
     def test_capture_xhs_link_with_manual_file_creates_partial_capture_record(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

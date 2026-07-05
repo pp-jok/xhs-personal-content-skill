@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from app.analysis import analyze_capture
-from app.capture import build_capture_record
+from app.capture import build_browser_capture_record, build_capture_record
+from app.capture.browser.cdp_client import DEFAULT_CDP_URL, capture_xhs_link_with_browser
 from app.models.core import (
     MODEL_TYPES,
     BaseModel,
@@ -138,6 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     capture_parser.add_argument("--workspace", required=True, help="Workspace directory.")
     capture_parser.add_argument("--inbox-item-id", required=True, help="ContentInboxItem id.")
     capture_parser.add_argument("--manual-file", help="Optional JSON file with user-visible copied content.")
+    capture_parser.add_argument("--cdp-url", default=DEFAULT_CDP_URL, help="Chrome DevTools Protocol endpoint.")
     capture_parser.set_defaults(handler=handle_capture_xhs_link)
 
     show_capture_parser = subparsers.add_parser("show-capture-result", help="Show one capture record.")
@@ -396,8 +398,17 @@ def handle_capture_xhs_link(args: argparse.Namespace) -> dict[str, Any]:
     inbox_repo = JsonRepository(workspace, ContentInboxItem)
     capture_repo = JsonRepository(workspace, CaptureRecord)
     inbox_item = inbox_repo.update(args.inbox_item_id, {"status": "capturing"})
-    manual_data = read_json_object(Path(args.manual_file), "manual capture") if args.manual_file else None
-    capture = build_capture_record(inbox_item, manual_data)
+    if args.manual_file:
+        manual_data = read_json_object(Path(args.manual_file), "manual capture")
+        capture = build_capture_record(inbox_item, manual_data)
+    else:
+        capture_id = f"capture-from-{inbox_item.id}"
+        browser_result = capture_xhs_link_with_browser(
+            source_url=inbox_item.source_url,
+            cdp_url=args.cdp_url,
+            output_dir=workspace / "captures" / capture_id,
+        )
+        capture = build_browser_capture_record(inbox_item, browser_result, capture_id=capture_id)
     saved = capture_repo.upsert(capture)
     inbox_repo.update(
         inbox_item.id,

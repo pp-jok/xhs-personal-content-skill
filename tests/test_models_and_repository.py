@@ -211,8 +211,10 @@ class ModelTests(unittest.TestCase):
             id="capture-001",
             inbox_item_id="inbox-001",
             source_url="https://www.xiaohongshu.com/explore/test",
+            canonical_url="https://www.xiaohongshu.com/explore/test",
             capture_method="manual",
             capture_status="partial",
+            published_at="2026-07-05T12:00:00+08:00",
             title="可见标题",
             body="可见正文",
             content_type="unknown",
@@ -224,11 +226,14 @@ class ModelTests(unittest.TestCase):
             available_fields=["title", "body"],
             missing_fields=["metrics.likes", "images"],
             warnings=["用户未提供完整截图。"],
+            diagnostics={"page_reachable": True},
         )
 
         self.assertEqual(record.capture_status, "partial")
         self.assertEqual(record.metrics["likes"], None)
         self.assertIn("metrics.likes", record.missing_fields)
+        self.assertEqual(record.canonical_url, "https://www.xiaohongshu.com/explore/test")
+        self.assertTrue(record.diagnostics["page_reachable"])
 
 
 class JsonRepositoryTests(unittest.TestCase):

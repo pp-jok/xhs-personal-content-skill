@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.2.0 - 2026-07-05
+
+Phase 12：用户授权 Chrome 单链接采集。
+
+### Added
+
+- 新增 Playwright CDP 浏览器采集路径，连接用户主动启动的专用 Chrome 调试实例。
+- `capture-xhs-link` 新增 `--cdp-url` 参数；无 `--manual-file` 时会尝试真实浏览器采集。
+- 新增小红书完整链接和短链的本地规范化逻辑。
+- 新增 HTML 可见内容提取：标题、正文、作者、发布时间、互动数据、图片、视频页面媒体信息和最多 30 条可见评论。
+- 新增页面 HTML 快照和采集诊断保存。
+- 新增登录限制、验证码、页面不可访问、DOM selector 失败和媒体保存状态诊断。
+- 新增本地 HTML fixture 测试和可选浏览器集成测试。
+
+### Changed
+
+- `CaptureRecord` 扩展 `canonical_url`、`published_at` 和 `diagnostics`。
+- 手动导入继续保留为降级路径，并明确标记 `capture_method=manual`。
+- 浏览器采集记录标记 `capture_method=browser_authorized`。
+- 文档补充专用 Chrome 启动命令、依赖安装和边界说明。
+
+### Boundaries
+
+- 只处理用户明确提交的单个链接。
+- 不批量抓取、不搜索平台、不遍历推荐流、不无限滚动评论。
+- 不绕过登录、验证码、风控或访问限制。
+- 不做 OCR、音频转写、关键帧抽取或 v1.3 媒体语义分析。
+- 不自动发布，不接外部模型 API。
+
 ## 1.1.0 - 2026-07-05
 
 Phase 11：质量提升验证。

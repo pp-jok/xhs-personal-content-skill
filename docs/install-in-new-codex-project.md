@@ -16,6 +16,13 @@
 
 如果已经复制过，重启 Codex 后即可在新项目中通过关键词触发。
 
+安装 Python 依赖：
+
+```bash
+cd ~/.codex/skills/xhs-personal-content-skill
+python3 -m pip install -r requirements.txt
+```
+
 ## 2. 在新项目中触发 Skill
 
 在新的 Codex 项目中直接说：
@@ -58,6 +65,16 @@ Codex 应自动写入：
 .xhs-personal-content-skill/real-sample/benchmark_account.json
 .xhs-personal-content-skill/real-sample/benchmark_post.json
 ```
+
+如果要让 Skill 读取用户授权浏览器中的单个链接当前可见内容，先启动专用 Chrome：
+
+```bash
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+  --remote-debugging-port=9222 \
+  --user-data-dir="$HOME/.xhs-personal-content-skill/chrome-profile"
+```
+
+首次使用时，在这个专用 Chrome 中自行登录小红书。Skill 只连接这个调试浏览器读取用户提交的单个链接，不读取日常 Chrome Profile，不批量抓取，不绕过登录、验证码或风控。
 
 ## 5. 运行验证
 
