@@ -325,6 +325,9 @@ Trigger examples:
 - “这个封面可以”
 - “以后不要这样写”
 - “这个规则适合我”
+- “确认这条规则”
+- “这条规则验证成功”
+- “废弃这条规则”
 
 Action:
 
@@ -333,8 +336,22 @@ Action:
 3. Extract polarity: keep, avoid, revise, strengthen, or test later.
 4. Convert the feedback into a durable preference, risk, or rule-card note.
 5. Use `add-feedback` for structured feedback capture.
-6. Prefer updating existing rules over creating duplicates.
-7. Reply with the enduring rule and how it will affect future output.
+6. When a candidate rule comes from captured-post analysis, use `create-rule-from-analysis` to create both the rule card and evidence.
+7. Use lifecycle commands for explicit user decisions: `approve-rule`, `mark-rule-testing`, `record-rule-result`, `reject-rule`, or `deprecate-rule`.
+8. Use `check-rule-relations` before claiming that rules conflict; repeated summaries with different applicable scenarios are not automatically conflicts.
+9. Prefer updating existing rules over creating duplicates.
+10. Reply with: what rule changed, what evidence supports it, current status, and how it will affect future output.
+
+Rule lifecycle:
+
+- 外部对标产生 -> `candidate`
+- 用户确认 -> `approved`
+- 用于草稿或发布 -> `testing`
+- 发布结果支持 -> `validated`
+- 结果不支持 -> `rejected`
+- 被更好规则替代 -> `deprecated`
+
+Do not auto-delete conflicting rules. Explain conflicts and ask the user to choose.
 
 ### 7. 复盘已发布内容
 
@@ -479,6 +496,11 @@ python3 -m app.cli capture-xhs-link --workspace .xhs-personal-content-skill/real
 python3 -m app.cli show-capture-result --workspace .xhs-personal-content-skill/real-sample --capture-id capture-from-inbox-xxxx
 python3 -m app.cli analyze-captured-post --workspace .xhs-personal-content-skill/real-sample --capture-id capture-from-inbox-xxxx
 python3 -m app.cli promote-to-benchmark --workspace .xhs-personal-content-skill/real-sample --inbox-item-id inbox-xxxx
+python3 -m app.cli create-rule-from-analysis --workspace .xhs-personal-content-skill/real-sample --analysis-id analysis-from-capture-xxxx --candidate-id candidate-rule-from-capture-xxxx-1
+python3 -m app.cli approve-rule --workspace .xhs-personal-content-skill/real-sample --rule-id rule-from-candidate-rule-from-capture-xxxx-1
+python3 -m app.cli mark-rule-testing --workspace .xhs-personal-content-skill/real-sample --rule-id rule-from-candidate-rule-from-capture-xxxx-1
+python3 -m app.cli record-rule-result --workspace .xhs-personal-content-skill/real-sample --rule-id rule-from-candidate-rule-from-capture-xxxx-1 --result success
+python3 -m app.cli check-rule-relations --workspace .xhs-personal-content-skill/real-sample
 python3 -m app.cli upsert-profile --workspace .xhs-personal-content-skill/real-sample --file /path/to/creator_profile.json
 python3 -m app.cli add-benchmark-account --workspace .xhs-personal-content-skill/real-sample --file /path/to/benchmark_account.json
 python3 -m app.cli add-benchmark-post --workspace .xhs-personal-content-skill/real-sample --file /path/to/benchmark_post.json

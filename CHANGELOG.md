@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.0.0 - 2026-07-05
+
+Phase 10：规则证据与生命周期。
+
+### Added
+
+- 新增 `RuleEvidence`，用于记录规则的来源片段、可见事实、推断和置信度。
+- 扩展 `RuleCard` 生命周期字段：`status`、`strength`、`validation_count`、`success_count`、`failure_count`、`last_validated_at`、`applicable_content_types`、`applicable_audiences`、`conflicts_with`、`supersedes`、`deprecated_reason`。
+- 新增规则生命周期 CLI：`create-rule-from-analysis`、`approve-rule`、`mark-rule-testing`、`record-rule-result`、`reject-rule`、`deprecate-rule`。
+- 新增 `check-rule-relations`，用于区分重复规则、适用场景不同的规则和需要人工解释的冲突规则。
+
+### Changed
+
+- 旧规则卡默认保持 `approved`，避免破坏 0.9.0 之前的工作区。
+- 规则冲突判断不再使用“同类型不同摘要即冲突”的简单逻辑，会先识别重复和场景差异。
+
+### Boundaries
+
+- 不自动删除冲突规则。
+- 不自动把候选规则视为已验证规则。
+- 冲突规则需要交给 Codex 和运营人员解释后处理。
+
 ## 0.9.0 - 2026-07-05
 
 Phase 9：采集内容结构化拆解与提升为对标。

@@ -24,9 +24,12 @@ from app.models.core import (
     PublishTask,
     ReviewRecord,
     RuleCard,
+    RuleEvidence,
     TopicItem,
+    now_iso,
 )
 from app.repositories import JsonRepository
+from app.rules import build_rule_and_evidence_from_analysis, check_rule_relations
 from app.services.mock_prompt_service import MockPromptService
 from app.services.prompt_contracts import load_contracts
 from app.services.real_sample_validation import RealSampleValidator
@@ -149,6 +152,45 @@ def build_parser() -> argparse.ArgumentParser:
     promote_parser.add_argument("--workspace", required=True, help="Workspace directory.")
     promote_parser.add_argument("--inbox-item-id", required=True, help="ContentInboxItem id.")
     promote_parser.set_defaults(handler=handle_promote_to_benchmark)
+
+    create_rule_parser = subparsers.add_parser("create-rule-from-analysis", help="Create a candidate rule and evidence from one analysis candidate.")
+    create_rule_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    create_rule_parser.add_argument("--analysis-id", required=True, help="BenchmarkAnalysis id.")
+    create_rule_parser.add_argument("--candidate-id", required=True, help="Candidate rule id from the analysis.")
+    create_rule_parser.set_defaults(handler=handle_create_rule_from_analysis)
+
+    approve_rule_parser = subparsers.add_parser("approve-rule", help="Mark a candidate rule as approved.")
+    approve_rule_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    approve_rule_parser.add_argument("--rule-id", required=True, help="RuleCard id.")
+    approve_rule_parser.set_defaults(handler=handle_approve_rule)
+
+    testing_rule_parser = subparsers.add_parser("mark-rule-testing", help="Mark an approved rule as testing.")
+    testing_rule_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    testing_rule_parser.add_argument("--rule-id", required=True, help="RuleCard id.")
+    testing_rule_parser.set_defaults(handler=handle_mark_rule_testing)
+
+    rule_result_parser = subparsers.add_parser("record-rule-result", help="Record one rule validation result.")
+    rule_result_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    rule_result_parser.add_argument("--rule-id", required=True, help="RuleCard id.")
+    rule_result_parser.add_argument("--result", choices=("success", "failure"), required=True, help="Validation result.")
+    rule_result_parser.set_defaults(handler=handle_record_rule_result)
+
+    reject_rule_parser = subparsers.add_parser("reject-rule", help="Reject a rule for the current account.")
+    reject_rule_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    reject_rule_parser.add_argument("--rule-id", required=True, help="RuleCard id.")
+    reject_rule_parser.add_argument("--reason", required=True, help="Why the rule is rejected.")
+    reject_rule_parser.set_defaults(handler=handle_reject_rule)
+
+    deprecate_rule_parser = subparsers.add_parser("deprecate-rule", help="Deprecate a rule replaced by better guidance.")
+    deprecate_rule_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    deprecate_rule_parser.add_argument("--rule-id", required=True, help="RuleCard id.")
+    deprecate_rule_parser.add_argument("--reason", required=True, help="Why the rule is deprecated.")
+    deprecate_rule_parser.add_argument("--superseded-by", help="Replacement rule id.")
+    deprecate_rule_parser.set_defaults(handler=handle_deprecate_rule)
+
+    relation_parser = subparsers.add_parser("check-rule-relations", help="Detect duplicate, context-different, and conflicting rules.")
+    relation_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    relation_parser.set_defaults(handler=handle_check_rule_relations)
 
     rule_parser = subparsers.add_parser("generate-rule-cards", help="Generate local mock rule cards for one benchmark post.")
     rule_parser.add_argument("--workspace", required=True, help="Workspace directory.")
@@ -465,6 +507,69 @@ def handle_promote_to_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def handle_create_rule_from_analysis(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    analysis = JsonRepository(workspace, BenchmarkAnalysis).read(args.analysis_id)
+    rule, evidence = build_rule_and_evidence_from_analysis(analysis, args.candidate_id)
+    saved_rule = JsonRepository(workspace, RuleCard).upsert(rule)
+    saved_evidence = JsonRepository(workspace, RuleEvidence).upsert(evidence)
+    return {"rule_id": saved_rule.id, "evidence_id": saved_evidence.id, "status": saved_rule.status}
+
+
+def handle_approve_rule(args: argparse.Namespace) -> dict[str, Any]:
+    rule = update_rule_status(Path(args.workspace), args.rule_id, {"status": "approved", "strength": "medium"})
+    return summarize_rule(rule)
+
+
+def handle_mark_rule_testing(args: argparse.Namespace) -> dict[str, Any]:
+    rule = update_rule_status(Path(args.workspace), args.rule_id, {"status": "testing"})
+    return summarize_rule(rule)
+
+
+def handle_record_rule_result(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    repo = JsonRepository(workspace, RuleCard)
+    rule = repo.read(args.rule_id)
+    changes: dict[str, Any] = {
+        "validation_count": rule.validation_count + 1,
+        "last_validated_at": now_iso(),
+        "status": "validated" if args.result == "success" else rule.status,
+    }
+    if args.result == "success":
+        changes["success_count"] = rule.success_count + 1
+        changes["strength"] = "strong" if rule.success_count + 1 >= 2 else rule.strength
+    else:
+        changes["failure_count"] = rule.failure_count + 1
+    updated = repo.update(rule.id, changes)
+    return summarize_rule(updated)
+
+
+def handle_reject_rule(args: argparse.Namespace) -> dict[str, Any]:
+    rule = update_rule_status(Path(args.workspace), args.rule_id, {"status": "rejected", "deprecated_reason": args.reason})
+    return summarize_rule(rule)
+
+
+def handle_deprecate_rule(args: argparse.Namespace) -> dict[str, Any]:
+    supersedes: list[str] = []
+    if args.superseded_by:
+        supersedes.append(args.superseded_by)
+    rule = update_rule_status(
+        Path(args.workspace),
+        args.rule_id,
+        {"status": "deprecated", "deprecated_reason": args.reason, "supersedes": supersedes},
+    )
+    return summarize_rule(rule)
+
+
+def handle_check_rule_relations(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    rules = JsonRepository(workspace, RuleCard).list_all()
+    return check_rule_relations(rules)
+
+
 def handle_generate_rule_cards(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
@@ -688,6 +793,22 @@ def find_analysis_by_capture_id(items: list[BenchmarkAnalysis], capture_id: str)
         if item.capture_id == capture_id:
             return item
     return None
+
+
+def update_rule_status(workspace: Path, rule_id: str, changes: dict[str, Any]) -> RuleCard:
+    ensure_workspace_dirs(workspace)
+    return JsonRepository(workspace, RuleCard).update(rule_id, changes)
+
+
+def summarize_rule(rule: RuleCard) -> dict[str, Any]:
+    return {
+        "rule_id": rule.id,
+        "status": rule.status,
+        "strength": rule.strength,
+        "validation_count": rule.validation_count,
+        "success_count": rule.success_count,
+        "failure_count": rule.failure_count,
+    }
 
 
 def build_inbox_id(url: str) -> str:

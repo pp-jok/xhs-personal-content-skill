@@ -220,6 +220,75 @@ python3 -m app.cli.main promote-to-benchmark \
 
 该命令用于运营人员确认后，把已采集和拆解的素材提升为对标账号草稿和对标帖子草稿。它不会自动判断任意链接都是强对标；生成结果仍需要人工确认和修订。
 
+## 从分析结果创建候选规则
+
+```bash
+python3 -m app.cli.main create-rule-from-analysis \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --analysis-id analysis-from-capture-xxxx \
+  --candidate-id candidate-rule-from-capture-xxxx-1
+```
+
+该命令会同时创建：
+
+- 一张 `candidate` 状态的规则卡。
+- 一条规则证据，记录可见事实和推断。
+
+## 规则生命周期
+
+确认规则：
+
+```bash
+python3 -m app.cli.main approve-rule \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --rule-id rule-from-candidate-rule-from-capture-xxxx-1
+```
+
+进入测试：
+
+```bash
+python3 -m app.cli.main mark-rule-testing \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --rule-id rule-from-candidate-rule-from-capture-xxxx-1
+```
+
+记录验证结果：
+
+```bash
+python3 -m app.cli.main record-rule-result \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --rule-id rule-from-candidate-rule-from-capture-xxxx-1 \
+  --result success
+```
+
+拒绝规则：
+
+```bash
+python3 -m app.cli.main reject-rule \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --rule-id rule-from-candidate-rule-from-capture-xxxx-1 \
+  --reason "不适合当前账号"
+```
+
+废弃规则：
+
+```bash
+python3 -m app.cli.main deprecate-rule \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --rule-id rule-from-candidate-rule-from-capture-xxxx-1 \
+  --reason "被更具体的规则替代" \
+  --superseded-by rule-new
+```
+
+检查重复和冲突：
+
+```bash
+python3 -m app.cli.main check-rule-relations \
+  --workspace .xhs-personal-content-skill/real-sample
+```
+
+该命令会区分重复规则、适用场景不同的规则和需要人工解释的冲突规则，不会自动删除任何规则。
+
 ## 生成规则卡片
 
 ```bash
@@ -348,6 +417,7 @@ Phase 7 后，真实样本验证会处理多篇对标帖，并在报告中补充
 - `capture-records`
 - `custom-tags`
 - `rule-cards`
+- `rule-evidence`
 - `topic-pool`
 - `content-drafts`
 - `publish-tasks`

@@ -5,6 +5,7 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from typing import Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -19,6 +20,8 @@ from app.models.core import (  # noqa: E402
     CreatorProfile,
     CustomTag,
     OwnPost,
+    RuleCard,
+    RuleEvidence,
 )
 from app.repositories import JsonRepository  # noqa: E402
 
@@ -552,6 +555,84 @@ class CliTests(unittest.TestCase):
             self.assertEqual(analysis.benchmark_post_id, post.id)
             self.assertEqual(item.status, "promoted_to_benchmark")
 
+    def test_create_rule_from_analysis_creates_candidate_rule_and_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            _, capture = self._seed_capture(data_dir, content_type="image")
+            analysis_output = self._run_cli(["analyze-captured-post", "--workspace", temp_dir, "--capture-id", capture.id])
+
+            output = self._run_cli(
+                [
+                    "create-rule-from-analysis",
+                    "--workspace",
+                    temp_dir,
+                    "--analysis-id",
+                    analysis_output["result"]["analysis_id"],
+                    "--candidate-id",
+                    f"candidate-rule-from-{capture.id}-1",
+                ]
+            )
+
+            self.assertTrue(output["ok"])
+            rule = JsonRepository(data_dir, RuleCard).read(output["result"]["rule_id"])
+            evidence = JsonRepository(data_dir, RuleEvidence).read(output["result"]["evidence_id"])
+            self.assertEqual(rule.status, "candidate")
+            self.assertEqual(rule.strength, "weak")
+            self.assertEqual(evidence.rule_id, rule.id)
+            self.assertEqual(evidence.source_type, "benchmark_analysis")
+            self.assertIn("新手如何做清晰表达", evidence.observable_fact)
+
+    def test_rule_lifecycle_commands_update_status_and_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            rule = self._seed_rule(data_dir, rule_id="rule-001")
+
+            approved = self._run_cli(["approve-rule", "--workspace", temp_dir, "--rule-id", rule.id])
+            testing = self._run_cli(["mark-rule-testing", "--workspace", temp_dir, "--rule-id", rule.id])
+            success = self._run_cli(["record-rule-result", "--workspace", temp_dir, "--rule-id", rule.id, "--result", "success"])
+            failure = self._run_cli(["record-rule-result", "--workspace", temp_dir, "--rule-id", rule.id, "--result", "failure"])
+            rejected = self._run_cli(["reject-rule", "--workspace", temp_dir, "--rule-id", rule.id, "--reason", "不适合当前账号"])
+            deprecated = self._run_cli(
+                [
+                    "deprecate-rule",
+                    "--workspace",
+                    temp_dir,
+                    "--rule-id",
+                    rule.id,
+                    "--reason",
+                    "被更具体的规则替代",
+                    "--superseded-by",
+                    "rule-new",
+                ]
+            )
+
+            final_rule = JsonRepository(data_dir, RuleCard).read(rule.id)
+            self.assertEqual(approved["result"]["status"], "approved")
+            self.assertEqual(testing["result"]["status"], "testing")
+            self.assertEqual(success["result"]["success_count"], 1)
+            self.assertEqual(failure["result"]["failure_count"], 1)
+            self.assertEqual(rejected["result"]["status"], "rejected")
+            self.assertEqual(deprecated["result"]["status"], "deprecated")
+            self.assertEqual(final_rule.validation_count, 2)
+            self.assertEqual(final_rule.deprecated_reason, "被更具体的规则替代")
+            self.assertIn("rule-new", final_rule.supersedes)
+
+    def test_check_rule_relations_marks_duplicates_and_context_differences_without_false_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            first = self._seed_rule(data_dir, "rule-title-a", summary="标题要包含具体对象", scenarios=["图文标题"])
+            second = self._seed_rule(data_dir, "rule-title-b", summary="标题要包含具体对象", scenarios=["视频标题"])
+            third = self._seed_rule(data_dir, "rule-title-c", summary="标题可以保留悬念", scenarios=["图文标题"])
+
+            output = self._run_cli(["check-rule-relations", "--workspace", temp_dir])
+
+            self.assertTrue(output["ok"])
+            self.assertIn([first.id, second.id], output["result"]["duplicates"])
+            self.assertIn([first.id, second.id], output["result"]["context_differences"])
+            conflict_pairs = output["result"]["conflicts"]
+            self.assertIn([first.id, third.id], conflict_pairs)
+            self.assertNotIn([first.id, second.id], conflict_pairs)
+
     def _run_cli(self, args: list[str], expected_code: int = 0) -> dict:
         buffer = StringIO()
         with redirect_stdout(buffer):
@@ -634,6 +715,27 @@ class CliTests(unittest.TestCase):
         JsonRepository(data_dir, ContentInboxItem).create(inbox_item)
         JsonRepository(data_dir, CaptureRecord).create(capture)
         return inbox_item, capture
+
+    def _seed_rule(
+        self,
+        data_dir: Path,
+        rule_id: str,
+        summary: str = "标题要包含具体对象",
+        scenarios: Optional[list[str]] = None,
+    ) -> RuleCard:
+        rule = RuleCard(
+            id=rule_id,
+            name=f"规则 {rule_id}",
+            type="title",
+            source_ids=["benchmark-post-001"],
+            applicable_scenarios=scenarios or ["图文标题"],
+            rule_summary=summary,
+            examples=["给职场新人看的表达模板"],
+            risks=["对象过宽会变泛。"],
+            adaptation_notes="适合当前账号的新手表达内容。",
+        )
+        JsonRepository(data_dir, RuleCard).create(rule)
+        return rule
 
 
 if __name__ == "__main__":

@@ -1,0 +1,13 @@
+{
+  "id": "evidence-001",
+  "rule_id": "rule-card-001",
+  "source_type": "benchmark_post",
+  "source_id": "benchmark-post-001",
+  "source_fragment": "title",
+  "evidence_type": "content_structure",
+  "observable_fact": "标题直接说明目标对象和内容承诺。",
+  "inference": "标题包含具体对象时更容易让目标用户判断是否相关。",
+  "confidence": 0.7,
+  "source_note": "来自人工录入的对标帖。",
+  "created_from": "manual-example"
+}

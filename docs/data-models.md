@@ -96,9 +96,21 @@
 
 用途：沉淀从对标内容和历史内容中提炼出的可复用规则。
 
-字段：`id`、`name`、`type`、`source_ids`、`applicable_scenarios`、`rule_summary`、`examples`、`risks`、`adaptation_notes`、`tags`。
+字段：`id`、`name`、`type`、`source_ids`、`applicable_scenarios`、`rule_summary`、`examples`、`risks`、`adaptation_notes`、`tags`、`status`、`strength`、`validation_count`、`success_count`、`failure_count`、`last_validated_at`、`applicable_content_types`、`applicable_audiences`、`conflicts_with`、`supersedes`、`deprecated_reason`。
 
-基础校验：规则名称、摘要和适配建议不能为空；来源、场景、示例、风险和标签必须是字符串列表。
+基础校验：规则名称、摘要和适配建议不能为空；来源、场景、示例、风险和标签必须是字符串列表；状态必须是 `candidate`、`approved`、`testing`、`validated`、`rejected`、`deprecated` 之一；强度必须是 `weak`、`medium`、`strong` 之一；验证次数不能为负数。
+
+说明：旧规则默认视为 `approved`，避免破坏旧工作区。生成草稿时应优先参考 `validated` 或 `strong` 规则。
+
+## RuleEvidence
+
+用途：记录规则的证据来源，让每条规则能追溯到可见事实和对应推断。
+
+字段：`id`、`rule_id`、`source_type`、`source_id`、`source_fragment`、`evidence_type`、`observable_fact`、`inference`、`confidence`。
+
+基础校验：规则、来源、来源片段、证据类型、可见事实和推断不能为空；来源类型必须是 `benchmark_post`、`benchmark_analysis`、`user_feedback`、`own_post`、`review_record` 之一。
+
+说明：`observable_fact` 只保存真实可见内容，`inference` 保存由 Codex 或运营人员做出的判断。
 
 ## TopicItem
 

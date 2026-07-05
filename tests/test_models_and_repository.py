@@ -21,6 +21,7 @@ from app.models.core import (  # noqa: E402
     PublishTask,
     ReviewRecord,
     RuleCard,
+    RuleEvidence,
     TopicItem,
     ValidationError,
 )
@@ -36,6 +37,7 @@ EXAMPLE_TO_MODEL = {
     "capture-record.json": CaptureRecord,
     "custom-tag.json": CustomTag,
     "rule-card.json": RuleCard,
+    "rule-evidence.json": RuleEvidence,
     "topic-item.json": TopicItem,
     "content-draft.json": ContentDraft,
     "publish-task.json": PublishTask,
@@ -108,12 +110,52 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(data["source_type"], "user_input")
 
     def test_collection_names_are_unique(self) -> None:
-        self.assertEqual(len(MODEL_TYPES), 13)
+        self.assertEqual(len(MODEL_TYPES), 14)
         self.assertEqual(MODEL_TYPES["creator-profiles"], CreatorProfile)
         self.assertEqual(MODEL_TYPES["benchmark-analyses"], BenchmarkAnalysis)
         self.assertEqual(MODEL_TYPES["content-inbox"], ContentInboxItem)
         self.assertEqual(MODEL_TYPES["capture-records"], CaptureRecord)
+        self.assertEqual(MODEL_TYPES["rule-evidence"], RuleEvidence)
         self.assertEqual(MODEL_TYPES["review-records"], ReviewRecord)
+
+    def test_rule_card_accepts_lifecycle_fields(self) -> None:
+        rule = RuleCard(
+            id="rule-lifecycle",
+            name="标题具体对象规则",
+            type="title",
+            source_ids=["benchmark-post-001"],
+            applicable_scenarios=["图文标题"],
+            rule_summary="标题优先包含具体对象。",
+            examples=["给职场新人看的汇报模板"],
+            risks=["对象过宽会变泛。"],
+            adaptation_notes="适合当前账号的新手表达内容。",
+            status="approved",
+            strength="medium",
+            validation_count=2,
+            success_count=1,
+            failure_count=1,
+            applicable_content_types=["image"],
+            applicable_audiences=["职场新人"],
+            conflicts_with=["rule-other"],
+            supersedes=[],
+        )
+
+        self.assertEqual(rule.status, "approved")
+        self.assertEqual(rule.strength, "medium")
+        self.assertEqual(rule.validation_count, 2)
+
+    def test_rule_evidence_requires_observable_fact(self) -> None:
+        with self.assertRaises(ValidationError):
+            RuleEvidence(
+                id="evidence-invalid",
+                rule_id="rule-001",
+                source_type="benchmark_post",
+                source_id="benchmark-post-001",
+                source_fragment="标题",
+                evidence_type="content_structure",
+                observable_fact="",
+                inference="标题具体。",
+            )
 
     def test_benchmark_analysis_rejects_invalid_template(self) -> None:
         with self.assertRaises(ValidationError):

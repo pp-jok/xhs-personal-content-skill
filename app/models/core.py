@@ -19,6 +19,9 @@ TagScope = Literal[
 
 TagType = Literal["preference", "usage", "goal", "risk", "source", "custom"]
 RuleType = Literal["title", "structure", "topic", "cover", "script", "operation"]
+RuleStatus = Literal["candidate", "approved", "testing", "validated", "rejected", "deprecated"]
+RuleStrength = Literal["weak", "medium", "strong"]
+RuleEvidenceSourceType = Literal["benchmark_post", "benchmark_analysis", "user_feedback", "own_post", "review_record"]
 ContentStatus = Literal["idea", "draft", "reviewing", "ready", "archived"]
 PublishStatus = Literal["planned", "preparing", "ready", "published", "cancelled"]
 InboxStatus = Literal["inbox", "capturing", "captured", "analyzed", "promoted_to_benchmark", "rejected", "archived"]
@@ -76,6 +79,11 @@ def ensure_list_items_are_text(value: list[Any], field_name: str) -> None:
 def ensure_optional_text(value: str | None, field_name: str) -> None:
     if value is not None and not isinstance(value, str):
         raise ValidationError(f"{field_name} must be a string or null")
+
+
+def ensure_non_negative_int(value: int, field_name: str) -> None:
+    if not isinstance(value, int) or value < 0:
+        raise ValidationError(f"{field_name} must be a non-negative integer")
 
 
 @dataclass
@@ -364,6 +372,17 @@ class RuleCard(BaseModel):
     risks: list[str] = field(default_factory=list)
     adaptation_notes: str = ""
     tags: list[str] = field(default_factory=list)
+    status: RuleStatus = "approved"
+    strength: RuleStrength = "weak"
+    validation_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    last_validated_at: str | None = None
+    applicable_content_types: list[str] = field(default_factory=list)
+    applicable_audiences: list[str] = field(default_factory=list)
+    conflicts_with: list[str] = field(default_factory=list)
+    supersedes: list[str] = field(default_factory=list)
+    deprecated_reason: str = ""
 
     def validate(self) -> None:
         require_text(self.name, "name")
@@ -375,6 +394,39 @@ class RuleCard(BaseModel):
         ensure_list_items_are_text(self.risks, "risks")
         require_text(self.adaptation_notes, "adaptation_notes")
         ensure_list_items_are_text(self.tags, "tags")
+        require_literal(self.status, RuleStatus, "status")
+        require_literal(self.strength, RuleStrength, "strength")
+        ensure_non_negative_int(self.validation_count, "validation_count")
+        ensure_non_negative_int(self.success_count, "success_count")
+        ensure_non_negative_int(self.failure_count, "failure_count")
+        ensure_optional_text(self.last_validated_at, "last_validated_at")
+        ensure_list_items_are_text(self.applicable_content_types, "applicable_content_types")
+        ensure_list_items_are_text(self.applicable_audiences, "applicable_audiences")
+        ensure_list_items_are_text(self.conflicts_with, "conflicts_with")
+        ensure_list_items_are_text(self.supersedes, "supersedes")
+        ensure_optional_text(self.deprecated_reason, "deprecated_reason")
+
+
+@dataclass
+class RuleEvidence(BaseModel):
+    collection_name: ClassVar[str] = "rule-evidence"
+
+    rule_id: str = ""
+    source_type: RuleEvidenceSourceType = "benchmark_post"
+    source_id: str = ""
+    source_fragment: str = ""
+    evidence_type: str = ""
+    observable_fact: str = ""
+    inference: str = ""
+
+    def validate(self) -> None:
+        require_text(self.rule_id, "rule_id")
+        require_literal(self.source_type, RuleEvidenceSourceType, "source_type")
+        require_text(self.source_id, "source_id")
+        require_text(self.source_fragment, "source_fragment")
+        require_text(self.evidence_type, "evidence_type")
+        require_text(self.observable_fact, "observable_fact")
+        require_text(self.inference, "inference")
 
 
 @dataclass
@@ -508,6 +560,7 @@ MODEL_TYPES: dict[str, type[BaseModel]] = {
         BenchmarkAnalysis,
         CustomTag,
         RuleCard,
+        RuleEvidence,
         TopicItem,
         ContentDraft,
         PublishTask,
