@@ -10,7 +10,8 @@ Operate a single creator account as a long-term local workflow. The user should 
 ## Hard Boundaries
 
 - Do not build UI.
-- Do not scrape Xiaohongshu or any external platform.
+- Do not perform bulk crawling, platform-wide search, automated account monitoring, or bypass access controls.
+- The skill may invoke an approved local capture tool for a single user-provided public link, limited to content visible in the user's authorized environment.
 - Do not auto-publish.
 - Do not call or configure external model APIs.
 - Do not turn this into a generic content generator.
@@ -99,6 +100,27 @@ A. 标题角度
 B. 选题方向
 C. 封面表达
 D. 脚本结构
+```
+
+### Link Intake
+
+When a user provides one Xiaohongshu link:
+
+1. Save the link into the content inbox first.
+2. Capture only user-visible or user-provided content.
+3. If title, body, media, metrics, author, or comments are not available, mark them as missing.
+4. Do not infer missing metrics, comments, media, or account facts from the link alone.
+5. Ask the user to provide a screenshot, copied text, or the reason they like the post when content is incomplete.
+
+Use this normal reply shape:
+
+```text
+这个链接已加入素材库。
+
+目前已获取到：链接和你的学习意图。
+还缺：标题、正文、封面/图片、互动数据或评论。
+
+你可以补一张截图，或复制标题和正文。我会继续拆解它适合学什么、哪些地方不适合你的账号。
 ```
 
 ### Preference Tuning
@@ -218,15 +240,18 @@ Trigger examples:
 - “添加这篇对标帖”
 - “分析这个截图”
 - “这篇小红书帖子可以对标”
+- “分析这个小红书链接”
+- “把这个链接加入素材库”
 
 Action:
 
 1. Read account profile, tags, existing benchmark accounts/posts, and user preference feedback.
-2. Extract: title, cover text, raw content, content type, visible metrics, source account, user-stated reason, borrowable points, non-borrowable points, rule candidates.
-3. When the user provides an image, inspect it and transcribe only visible content. Do not invent missing text or metrics.
-4. If the source account is new and enough information exists, also add/update the benchmark account.
-5. Use `add-benchmark-post` when writing structured post data.
-6. Reply with: learned angle, risk, possible rule, and one guided question such as “你更想学标题、选题、封面还是脚本？”
+2. If the user provides only a link, use `add-inbox-item`, then `capture-xhs-link`, and explain missing content plainly.
+3. Extract: title, cover text, raw content, content type, visible metrics, source account, user-stated reason, borrowable points, non-borrowable points, rule candidates.
+4. When the user provides an image, inspect it and transcribe only visible content. Do not invent missing text or metrics.
+5. If the source account is new and enough information exists, also add/update the benchmark account.
+6. Use `add-benchmark-post` only after enough visible content exists to form a real benchmark post.
+7. Reply with: learned angle, risk, possible rule, and one guided question such as “你更想学标题、选题、封面还是脚本？”
 
 ### 4. 运行真实样本验证
 
@@ -435,6 +460,9 @@ python3 -m app.cli init-workspace --workspace .xhs-personal-content-skill/real-s
 Write user-provided account and sample inputs:
 
 ```bash
+python3 -m app.cli add-inbox-item --workspace .xhs-personal-content-skill/real-sample --url https://www.xiaohongshu.com/explore/xxxx --user-intent "学习选题和结构"
+python3 -m app.cli capture-xhs-link --workspace .xhs-personal-content-skill/real-sample --inbox-item-id inbox-xxxx --manual-file /path/to/manual-capture.json
+python3 -m app.cli show-capture-result --workspace .xhs-personal-content-skill/real-sample --capture-id capture-from-inbox-xxxx
 python3 -m app.cli upsert-profile --workspace .xhs-personal-content-skill/real-sample --file /path/to/creator_profile.json
 python3 -m app.cli add-benchmark-account --workspace .xhs-personal-content-skill/real-sample --file /path/to/benchmark_account.json
 python3 -m app.cli add-benchmark-post --workspace .xhs-personal-content-skill/real-sample --file /path/to/benchmark_post.json

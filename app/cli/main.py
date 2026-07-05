@@ -3,15 +3,19 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from hashlib import sha1
 from pathlib import Path
 from typing import Any, Sequence
 
+from app.capture import build_capture_record
 from app.models.core import (
     MODEL_TYPES,
     BaseModel,
     BenchmarkAccount,
     BenchmarkPost,
+    CaptureRecord,
     ContentDraft,
+    ContentInboxItem,
     CreatorProfile,
     CustomTag,
     OwnPost,
@@ -114,6 +118,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     workspace_validation_parser.add_argument("--workspace", required=True, help="Workspace directory.")
     workspace_validation_parser.set_defaults(handler=handle_validate_workspace)
+
+    inbox_parser = subparsers.add_parser("add-inbox-item", help="Add or update one user-provided content link.")
+    inbox_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    inbox_parser.add_argument("--url", required=True, help="User-provided Xiaohongshu URL.")
+    inbox_parser.add_argument("--user-intent", default="", help="What the user wants to learn from the link.")
+    inbox_parser.add_argument("--user-reason", default="", help="Why the user thinks the link is useful.")
+    inbox_parser.add_argument("--focus", action="append", default=[], help="Requested focus, can be repeated.")
+    inbox_parser.set_defaults(handler=handle_add_inbox_item)
+
+    capture_parser = subparsers.add_parser("capture-xhs-link", help="Create a local capture record for one inbox item.")
+    capture_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    capture_parser.add_argument("--inbox-item-id", required=True, help="ContentInboxItem id.")
+    capture_parser.add_argument("--manual-file", help="Optional JSON file with user-visible copied content.")
+    capture_parser.set_defaults(handler=handle_capture_xhs_link)
+
+    show_capture_parser = subparsers.add_parser("show-capture-result", help="Show one capture record.")
+    show_capture_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    show_capture_parser.add_argument("--capture-id", required=True, help="CaptureRecord id.")
+    show_capture_parser.set_defaults(handler=handle_show_capture_result)
 
     rule_parser = subparsers.add_parser("generate-rule-cards", help="Generate local mock rule cards for one benchmark post.")
     rule_parser.add_argument("--workspace", required=True, help="Workspace directory.")
@@ -272,6 +295,69 @@ def handle_validate_workspace(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
     return workspace_status(workspace)
+
+
+def handle_add_inbox_item(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    repo = JsonRepository(workspace, ContentInboxItem)
+    existing = find_inbox_item_by_url(repo.list_all(), args.url)
+    deduplicated = existing is not None
+    item_id = existing.id if existing else build_inbox_id(args.url)
+    data = existing.to_dict() if existing else {}
+    data.update(
+        {
+            "id": item_id,
+            "source_url": args.url,
+            "source_platform": "xiaohongshu",
+            "status": data.get("status", "inbox"),
+            "capture_status": data.get("capture_status", "pending"),
+            "content_type": data.get("content_type", "unknown"),
+            "user_intent": args.user_intent or data.get("user_intent", ""),
+            "user_reason": args.user_reason or data.get("user_reason", ""),
+            "requested_focus": args.focus or data.get("requested_focus", []),
+            "source_type": "user_provided_link",
+            "created_from": "add-inbox-item",
+        }
+    )
+    saved = repo.upsert(ContentInboxItem.from_dict(data))
+    return {"id": saved.id, "deduplicated": deduplicated, "status": saved.status, "capture_status": saved.capture_status}
+
+
+def handle_capture_xhs_link(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    inbox_repo = JsonRepository(workspace, ContentInboxItem)
+    capture_repo = JsonRepository(workspace, CaptureRecord)
+    inbox_item = inbox_repo.update(args.inbox_item_id, {"status": "capturing"})
+    manual_data = read_json_object(Path(args.manual_file), "manual capture") if args.manual_file else None
+    capture = build_capture_record(inbox_item, manual_data)
+    saved = capture_repo.upsert(capture)
+    inbox_repo.update(
+        inbox_item.id,
+        {
+            "status": "captured" if saved.capture_status in {"success", "partial"} else "inbox",
+            "capture_status": saved.capture_status,
+            "content_type": saved.content_type,
+            "captured_at": saved.captured_at,
+            "missing_fields": saved.missing_fields,
+            "warnings": saved.warnings,
+            "confidence": saved.confidence,
+        },
+    )
+    return {
+        "capture_id": saved.id,
+        "inbox_item_id": inbox_item.id,
+        "capture_status": saved.capture_status,
+        "missing_fields": saved.missing_fields,
+        "warnings": saved.warnings,
+    }
+
+
+def handle_show_capture_result(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    return JsonRepository(workspace, CaptureRecord).read(args.capture_id).to_dict()
 
 
 def handle_generate_rule_cards(args: argparse.Namespace) -> dict[str, Any]:
@@ -476,6 +562,17 @@ def count_feedback_issues(path: Path) -> int:
     data = read_json_object(path, path.name)
     issues = data.get("issues", [])
     return len(issues) if isinstance(issues, list) else 0
+
+
+def find_inbox_item_by_url(items: list[ContentInboxItem], url: str) -> ContentInboxItem | None:
+    for item in items:
+        if item.source_url == url:
+            return item
+    return None
+
+
+def build_inbox_id(url: str) -> str:
+    return "inbox-" + sha1(url.encode("utf-8")).hexdigest()[:12]
 
 
 def build_prompt_service(prompts_dir: str | Path) -> MockPromptService:

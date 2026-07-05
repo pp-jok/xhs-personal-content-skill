@@ -21,6 +21,10 @@ TagType = Literal["preference", "usage", "goal", "risk", "source", "custom"]
 RuleType = Literal["title", "structure", "topic", "cover", "script", "operation"]
 ContentStatus = Literal["idea", "draft", "reviewing", "ready", "archived"]
 PublishStatus = Literal["planned", "preparing", "ready", "published", "cancelled"]
+InboxStatus = Literal["inbox", "capturing", "captured", "analyzed", "promoted_to_benchmark", "rejected", "archived"]
+CaptureStatus = Literal["pending", "success", "partial", "failed"]
+CaptureMethod = Literal["manual", "browser_authorized"]
+CapturedContentType = Literal["unknown", "image", "video", "mixed"]
 
 
 class ValidationError(ValueError):
@@ -202,6 +206,78 @@ class BenchmarkPost(BaseModel):
 
 
 @dataclass
+class ContentInboxItem(BaseModel):
+    collection_name: ClassVar[str] = "content-inbox"
+
+    source_url: str = ""
+    source_platform: str = "xiaohongshu"
+    status: InboxStatus = "inbox"
+    capture_status: CaptureStatus = "pending"
+    content_type: CapturedContentType = "unknown"
+    user_intent: str = ""
+    requested_focus: list[str] = field(default_factory=list)
+    captured_at: str | None = None
+    warnings: list[str] = field(default_factory=list)
+
+    def validate(self) -> None:
+        require_text(self.source_url, "source_url")
+        require_text(self.source_platform, "source_platform")
+        if self.source_platform != "xiaohongshu":
+            raise ValidationError("source_platform must be xiaohongshu")
+        require_literal(self.status, InboxStatus, "status")
+        require_literal(self.capture_status, CaptureStatus, "capture_status")
+        require_literal(self.content_type, CapturedContentType, "content_type")
+        ensure_optional_text(self.user_intent, "user_intent")
+        ensure_list_items_are_text(self.requested_focus, "requested_focus")
+        ensure_optional_text(self.captured_at, "captured_at")
+        ensure_list_items_are_text(self.warnings, "warnings")
+
+
+@dataclass
+class CaptureRecord(BaseModel):
+    collection_name: ClassVar[str] = "capture-records"
+
+    inbox_item_id: str = ""
+    source_url: str = ""
+    capture_method: CaptureMethod = "manual"
+    capture_status: CaptureStatus = "partial"
+    captured_at: str = field(default_factory=now_iso)
+    title: str = ""
+    body: str = ""
+    content_type: CapturedContentType = "unknown"
+    author: dict[str, Any] = field(default_factory=dict)
+    metrics: dict[str, Any] = field(default_factory=dict)
+    images: list[dict[str, Any]] = field(default_factory=list)
+    video: dict[str, Any] = field(default_factory=dict)
+    comments: list[dict[str, Any]] = field(default_factory=list)
+    available_fields: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    raw_snapshot_path: str = ""
+
+    def validate(self) -> None:
+        require_text(self.inbox_item_id, "inbox_item_id")
+        require_text(self.source_url, "source_url")
+        require_literal(self.capture_method, CaptureMethod, "capture_method")
+        require_literal(self.capture_status, CaptureStatus, "capture_status")
+        require_text(self.captured_at, "captured_at")
+        ensure_optional_text(self.title, "title")
+        ensure_optional_text(self.body, "body")
+        require_literal(self.content_type, CapturedContentType, "content_type")
+        require_dict(self.author, "author")
+        require_dict(self.metrics, "metrics")
+        require_list(self.images, "images")
+        for image in self.images:
+            require_dict(image, "images item")
+        require_dict(self.video, "video")
+        require_list(self.comments, "comments")
+        for comment in self.comments:
+            require_dict(comment, "comments item")
+        ensure_list_items_are_text(self.available_fields, "available_fields")
+        ensure_list_items_are_text(self.warnings, "warnings")
+        ensure_optional_text(self.raw_snapshot_path, "raw_snapshot_path")
+
+
+@dataclass
 class CustomTag(BaseModel):
     collection_name: ClassVar[str] = "custom-tags"
 
@@ -374,6 +450,8 @@ MODEL_TYPES: dict[str, type[BaseModel]] = {
         CreatorProfile,
         BenchmarkAccount,
         BenchmarkPost,
+        ContentInboxItem,
+        CaptureRecord,
         CustomTag,
         RuleCard,
         TopicItem,

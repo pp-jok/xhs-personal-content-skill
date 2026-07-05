@@ -1,0 +1,11 @@
+{
+  "source_url": "https://www.xiaohongshu.com/explore/xxxx",
+  "user_intent": "我想学习这篇的选题、标题或结构",
+  "user_reason": "我觉得它好的地方是...",
+  "requested_focus": [
+    "title",
+    "topic",
+    "cover",
+    "structure"
+  ]
+}

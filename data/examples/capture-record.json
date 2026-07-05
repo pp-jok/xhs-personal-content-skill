@@ -1,0 +1,52 @@
+{
+  "id": "capture-001",
+  "inbox_item_id": "inbox-001",
+  "source_url": "https://www.xiaohongshu.com/explore/example",
+  "capture_method": "manual",
+  "capture_status": "partial",
+  "captured_at": "2026-07-05T10:00:00Z",
+  "title": "可见标题示例",
+  "body": "用户复制出来的可见正文。",
+  "content_type": "image",
+  "author": {
+    "name": "可见作者"
+  },
+  "metrics": {
+    "likes": 2,
+    "collects": 3,
+    "comments": null,
+    "shares": null
+  },
+  "images": [
+    {
+      "path": "screenshot.png",
+      "alt": "用户提供的截图"
+    }
+  ],
+  "video": {},
+  "comments": [
+    {
+      "content": "想看更多解释"
+    }
+  ],
+  "available_fields": [
+    "title",
+    "body",
+    "author",
+    "metrics.likes",
+    "metrics.collects",
+    "images",
+    "comments"
+  ],
+  "missing_fields": [
+    "metrics.comments",
+    "metrics.shares"
+  ],
+  "warnings": [
+    "采集结果不完整，缺失字段已记录。"
+  ],
+  "raw_snapshot_path": "",
+  "confidence": 0.6,
+  "source_type": "user_visible_manual_capture",
+  "created_from": "capture-xhs-link"
+}

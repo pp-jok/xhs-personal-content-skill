@@ -11,6 +11,8 @@ from app.models.core import (  # noqa: E402
     BenchmarkAccount,
     BenchmarkPost,
     ContentDraft,
+    CaptureRecord,
+    ContentInboxItem,
     CreatorProfile,
     CustomTag,
     MODEL_TYPES,
@@ -28,6 +30,8 @@ EXAMPLE_TO_MODEL = {
     "creator-profile.json": CreatorProfile,
     "benchmark-account.json": BenchmarkAccount,
     "benchmark-post.json": BenchmarkPost,
+    "content-inbox-item.json": ContentInboxItem,
+    "capture-record.json": CaptureRecord,
     "custom-tag.json": CustomTag,
     "rule-card.json": RuleCard,
     "topic-item.json": TopicItem,
@@ -102,9 +106,44 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(data["source_type"], "user_input")
 
     def test_collection_names_are_unique(self) -> None:
-        self.assertEqual(len(MODEL_TYPES), 10)
+        self.assertEqual(len(MODEL_TYPES), 12)
         self.assertEqual(MODEL_TYPES["creator-profiles"], CreatorProfile)
+        self.assertEqual(MODEL_TYPES["content-inbox"], ContentInboxItem)
+        self.assertEqual(MODEL_TYPES["capture-records"], CaptureRecord)
         self.assertEqual(MODEL_TYPES["review-records"], ReviewRecord)
+
+    def test_content_inbox_item_rejects_invalid_status(self) -> None:
+        with self.assertRaises(ValidationError):
+            ContentInboxItem(
+                id="inbox-invalid",
+                source_url="https://www.xiaohongshu.com/explore/test",
+                user_intent="学习标题",
+                status="unknown",
+            )
+
+    def test_capture_record_accepts_partial_success_with_missing_fields(self) -> None:
+        record = CaptureRecord(
+            id="capture-001",
+            inbox_item_id="inbox-001",
+            source_url="https://www.xiaohongshu.com/explore/test",
+            capture_method="manual",
+            capture_status="partial",
+            title="可见标题",
+            body="可见正文",
+            content_type="unknown",
+            author={"name": "可见作者"},
+            metrics={"likes": None, "collects": None, "comments": None, "shares": None},
+            images=[],
+            video={},
+            comments=[],
+            available_fields=["title", "body"],
+            missing_fields=["metrics.likes", "images"],
+            warnings=["用户未提供完整截图。"],
+        )
+
+        self.assertEqual(record.capture_status, "partial")
+        self.assertEqual(record.metrics["likes"], None)
+        self.assertIn("metrics.likes", record.missing_fields)
 
 
 class JsonRepositoryTests(unittest.TestCase):

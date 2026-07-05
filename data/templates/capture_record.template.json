@@ -1,0 +1,26 @@
+{
+  "title": "从页面上能看到的标题",
+  "body": "复制出来的正文或截图转写内容",
+  "content_type": "image",
+  "author": {
+    "name": "页面可见账号名"
+  },
+  "metrics": {
+    "likes": null,
+    "collects": null,
+    "comments": null,
+    "shares": null
+  },
+  "images": [
+    {
+      "path": "本地截图文件名或描述",
+      "alt": "首图大概内容"
+    }
+  ],
+  "video": {},
+  "comments": [
+    {
+      "content": "当前可见评论"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "inbox-001",
+  "source_url": "https://www.xiaohongshu.com/explore/example",
+  "source_platform": "xiaohongshu",
+  "status": "inbox",
+  "capture_status": "pending",
+  "content_type": "unknown",
+  "user_intent": "学习选题和标题结构",
+  "user_reason": "用户认为这篇内容开头吸引人。",
+  "requested_focus": [
+    "title",
+    "structure"
+  ],
+  "captured_at": null,
+  "missing_fields": [
+    "title",
+    "body"
+  ],
+  "warnings": [],
+  "confidence": 0.4,
+  "source_type": "user_provided_link",
+  "source_note": "用户主动提供的单个链接。",
+  "created_from": "add-inbox-item"
+}

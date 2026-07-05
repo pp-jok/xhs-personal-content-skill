@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.cli.main import main  # noqa: E402
-from app.models.core import BenchmarkPost, CreatorProfile, CustomTag, OwnPost  # noqa: E402
+from app.models.core import BenchmarkPost, CaptureRecord, ContentInboxItem, CreatorProfile, CustomTag, OwnPost  # noqa: E402
 from app.repositories import JsonRepository  # noqa: E402
 
 
@@ -362,6 +362,139 @@ class CliTests(unittest.TestCase):
             rule = json.loads(rule_path.read_text(encoding="utf-8"))
             self.assertEqual(rule["type"], "title")
             self.assertIn("真人经验口吻", rule["adaptation_notes"])
+
+    def test_add_inbox_item_creates_and_deduplicates_by_url(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            url = "https://www.xiaohongshu.com/explore/test-note"
+
+            first = self._run_cli(
+                [
+                    "add-inbox-item",
+                    "--workspace",
+                    temp_dir,
+                    "--url",
+                    url,
+                    "--user-intent",
+                    "学习选题和视频结构",
+                    "--user-reason",
+                    "开头很吸引人",
+                    "--focus",
+                    "title",
+                    "--focus",
+                    "structure",
+                ]
+            )
+            second = self._run_cli(
+                [
+                    "add-inbox-item",
+                    "--workspace",
+                    temp_dir,
+                    "--url",
+                    url,
+                    "--user-intent",
+                    "补充学习封面",
+                ]
+            )
+
+            self.assertTrue(first["ok"])
+            self.assertFalse(first["result"]["deduplicated"])
+            self.assertTrue(second["result"]["deduplicated"])
+            self.assertEqual(first["result"]["id"], second["result"]["id"])
+            items = JsonRepository(Path(temp_dir), ContentInboxItem).list_all()
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].capture_status, "pending")
+            self.assertEqual(items[0].user_intent, "补充学习封面")
+
+    def test_capture_xhs_link_without_manual_file_records_failed_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            inbox = self._run_cli(
+                [
+                    "add-inbox-item",
+                    "--workspace",
+                    temp_dir,
+                    "--url",
+                    "https://www.xiaohongshu.com/explore/test-note",
+                    "--user-intent",
+                    "学习标题",
+                ]
+            )
+
+            capture = self._run_cli(
+                [
+                    "capture-xhs-link",
+                    "--workspace",
+                    temp_dir,
+                    "--inbox-item-id",
+                    inbox["result"]["id"],
+                ]
+            )
+
+            self.assertTrue(capture["ok"])
+            self.assertEqual(capture["result"]["capture_status"], "failed")
+            self.assertIn("title", capture["result"]["missing_fields"])
+            record = JsonRepository(Path(temp_dir), CaptureRecord).read(capture["result"]["capture_id"])
+            self.assertEqual(record.capture_status, "failed")
+            item = JsonRepository(Path(temp_dir), ContentInboxItem).read(inbox["result"]["id"])
+            self.assertEqual(item.capture_status, "failed")
+
+    def test_capture_xhs_link_with_manual_file_creates_partial_capture_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manual_file = Path(temp_dir) / "manual-capture.json"
+            manual_file.write_text(
+                json.dumps(
+                    {
+                        "title": "64型和16型测试有什么区别？",
+                        "body": "新版测试加入两个后缀维度。",
+                        "content_type": "image",
+                        "author": {"name": "可见账号"},
+                        "metrics": {"likes": 2, "collects": 3, "comments": None, "shares": None},
+                        "comments": [{"content": "想看更多解释"}],
+                        "images": [{"path": "screenshot.png", "alt": "首图截图"}],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            inbox = self._run_cli(
+                [
+                    "add-inbox-item",
+                    "--workspace",
+                    temp_dir,
+                    "--url",
+                    "https://www.xiaohongshu.com/explore/test-note",
+                    "--user-intent",
+                    "学习选题",
+                ]
+            )
+
+            capture = self._run_cli(
+                [
+                    "capture-xhs-link",
+                    "--workspace",
+                    temp_dir,
+                    "--inbox-item-id",
+                    inbox["result"]["id"],
+                    "--manual-file",
+                    str(manual_file),
+                ]
+            )
+            shown = self._run_cli(
+                [
+                    "show-capture-result",
+                    "--workspace",
+                    temp_dir,
+                    "--capture-id",
+                    capture["result"]["capture_id"],
+                ]
+            )
+
+            self.assertTrue(capture["ok"])
+            self.assertEqual(capture["result"]["capture_status"], "partial")
+            self.assertEqual(shown["result"]["title"], "64型和16型测试有什么区别？")
+            self.assertIn("metrics.comments", shown["result"]["missing_fields"])
+            item = JsonRepository(Path(temp_dir), ContentInboxItem).read(inbox["result"]["id"])
+            self.assertEqual(item.status, "captured")
+            self.assertEqual(item.content_type, "image")
 
     def _run_cli(self, args: list[str], expected_code: int = 0) -> dict:
         buffer = StringIO()

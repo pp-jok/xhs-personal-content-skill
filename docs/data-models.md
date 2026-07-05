@@ -52,6 +52,26 @@
 
 基础校验：所属账号、标题、内容类型、原始内容不能为空；分析结果和指标必须是对象；规则卡片候选必须是对象列表。
 
+## ContentInboxItem
+
+用途：记录用户主动提供的单个小红书链接，在采集或分析前先进入素材收件箱。
+
+字段：`id`、`source_url`、`source_platform`、`status`、`capture_status`、`content_type`、`user_intent`、`user_reason`、`requested_focus`、`captured_at`、`missing_fields`、`warnings`、`confidence`。
+
+基础校验：链接不能为空；平台第一版固定为 `xiaohongshu`；`status` 必须是 `inbox`、`capturing`、`captured`、`analyzed`、`promoted_to_benchmark`、`rejected`、`archived` 之一；`capture_status` 必须是 `pending`、`success`、`partial`、`failed` 之一。
+
+说明：同一链接重复提交时应更新原记录，不应生成无意义重复素材。
+
+## CaptureRecord
+
+用途：记录单个链接当前可见内容的标准化采集结果。
+
+字段：`id`、`inbox_item_id`、`source_url`、`capture_method`、`capture_status`、`captured_at`、`title`、`body`、`content_type`、`author`、`metrics`、`images`、`video`、`comments`、`available_fields`、`missing_fields`、`warnings`、`raw_snapshot_path`。
+
+基础校验：所属收件箱条目和链接不能为空；采集方式必须是 `manual` 或 `browser_authorized`；采集状态必须是 `pending`、`success`、`partial`、`failed` 之一；互动数据必须是对象，缺失值用 `null`，不能用 `0` 伪造。
+
+说明：采集不到完整内容时必须记录缺失字段和 warning，不允许补造标题、正文、指标或评论。
+
 ## CustomTag
 
 用途：定义可绑定到多个对象的自定义标签。
