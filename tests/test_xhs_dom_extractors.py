@@ -92,6 +92,49 @@ class XhsDomExtractorTests(unittest.TestCase):
             self.assertIn("body", result.diagnostics["selectors_failed"])
             self.assertTrue((Path(temp_dir) / "page.html").exists())
 
+    def test_extracts_hydration_note_detail_map_and_redacts_sensitive_fields(self) -> None:
+        html = """
+        <html><head><title>fallback</title></head><body>
+        <script>
+        window.__INITIAL_STATE__ = {"note":{"noteDetailMap":{"note123":{"comments":[
+          {"content":"第一条可见评论"},
+          {"content":"第二条可见评论"}
+        ],"note":{
+          "xsecToken":"secret-token",
+          "noteId":"note123",
+          "type":"video",
+          "title":"结构化标题",
+          "desc":"结构化正文",
+          "time":1780000000000,
+          "user":{"nickname":"结构化作者","userId":"user-secret","xsecToken":"user-token"},
+          "interactInfo":{"likedCount":"12","collectedCount":"8","commentCount":"3","shareCount":"1"},
+          "imageList":[{"url":"https://media.example/image.jpg","traceId":"trace-redacted"}],
+          "video":{"media":{"stream":{"h264":[{"masterUrl":"https://media.example/video.mp4"}]}}}
+        }}}}};
+        </script>
+        </body></html>
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = extract_visible_content(
+                html=html,
+                source_url="https://www.xiaohongshu.com/explore/note123",
+                canonical_url="https://www.xiaohongshu.com/explore/note123",
+                output_dir=Path(temp_dir),
+            )
+
+            self.assertEqual(result.capture_status, "success")
+            self.assertEqual(result.title, "结构化标题")
+            self.assertEqual(result.body, "结构化正文")
+            self.assertEqual(result.content_type, "video")
+            self.assertEqual(result.author["name"], "结构化作者")
+            self.assertEqual(result.metrics["likes"], 12)
+            self.assertEqual(result.metrics["collects"], 8)
+            self.assertEqual(len(result.images), 1)
+            self.assertEqual(result.images[0]["remote_url"], "<redacted>")
+            self.assertEqual(result.video["evidence"], "hydration_state")
+            self.assertNotIn("secret-token", str(result.video))
+            self.assertEqual(len(result.comments), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

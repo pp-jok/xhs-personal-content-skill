@@ -11,7 +11,7 @@ from app.capture.browser.url_normalizer import normalize_xhs_url  # noqa: E402
 class UrlNormalizerTests(unittest.TestCase):
     def test_normalizes_full_note_url_and_removes_tracking_query(self) -> None:
         result = normalize_xhs_url(
-            "https://www.xiaohongshu.com/explore/abc123?channel_type=explore_feed&xsec_token=secret"
+            "https://www.xiaohongshu.com/explore/abc123?channel_type=explore_feed&debug_param=redacted"
         )
 
         self.assertEqual(result.url_type, "note")

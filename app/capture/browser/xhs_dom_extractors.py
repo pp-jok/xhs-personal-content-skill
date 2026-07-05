@@ -138,6 +138,8 @@ def extract_visible_content(
 
     parser = XhsVisibleContentParser(comment_limit=comment_limit)
     parser.feed(html)
+    hydration = extract_hydration_note(html, comment_limit=comment_limit)
+    apply_hydration(parser, hydration)
     body = "\n".join(parser.body_parts).strip()
     diagnostics = CaptureDiagnostics(
         login_required=parser.login_required,
@@ -158,7 +160,7 @@ def extract_visible_content(
     if missing_fields:
         warnings.append("部分页面字段未采集到，已记录缺失字段和选择器诊断。")
 
-    capture_status = decide_status(parser, body)
+    capture_status = decide_status(parser, body, content_type)
     diagnostics_path = output_dir / "diagnostics.json"
     diagnostics_path.write_text(json.dumps(diagnostics.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -184,8 +186,6 @@ def extract_visible_content(
 
 
 def infer_content_type(images: list[dict[str, Any]], video: dict[str, Any]) -> str:
-    if images and video:
-        return "mixed"
     if video:
         return "video"
     if images:
@@ -193,11 +193,18 @@ def infer_content_type(images: list[dict[str, Any]], video: dict[str, Any]) -> s
     return "unknown"
 
 
-def decide_status(parser: XhsVisibleContentParser, body: str) -> str:
+def decide_status(parser: XhsVisibleContentParser, body: str, content_type: str) -> str:
     if parser.login_required or parser.captcha_detected:
         return "failed"
-    if parser.title or body:
-        return "success"
+    has_text = bool(parser.title or body)
+    if content_type == "video":
+        return "success" if has_text and parser.video else "failed"
+    if content_type == "image":
+        return "success" if has_text and parser.images else "failed"
+    if content_type == "mixed":
+        return "success" if has_text and (parser.images or parser.video) else "failed"
+    if has_text:
+        return "partial"
     return "failed"
 
 
@@ -263,3 +270,121 @@ def parse_int(value: str | None) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def extract_hydration_note(html: str, comment_limit: int) -> dict[str, Any]:
+    note_map = extract_balanced_json_after_key(html, '"noteDetailMap"')
+    if note_map is None:
+        note_map = extract_balanced_json_after_key(html, "noteDetailMap")
+    if not note_map:
+        return {}
+    try:
+        parsed = json.loads(note_map)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict) or not parsed:
+        return {}
+    first = next(iter(parsed.values()))
+    if not isinstance(first, dict):
+        return {}
+    note = first.get("note")
+    if not isinstance(note, dict):
+        return {}
+    comments = first.get("comments") if isinstance(first.get("comments"), list) else []
+    return {"note": note, "comments": comments[:comment_limit]}
+
+
+def extract_balanced_json_after_key(text: str, key: str) -> str | None:
+    key_index = text.find(key)
+    if key_index < 0:
+        return None
+    start = text.find("{", key_index)
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def apply_hydration(parser: XhsVisibleContentParser, hydration: dict[str, Any]) -> None:
+    note = hydration.get("note")
+    if not isinstance(note, dict):
+        return
+    parser.title = parser.title or text_value(note.get("title"))
+    desc = text_value(note.get("desc"))
+    if desc and desc not in parser.body_parts:
+        parser.body_parts.append(desc)
+    user = note.get("user") if isinstance(note.get("user"), dict) else {}
+    nickname = text_value(user.get("nickname")) if isinstance(user, dict) else ""
+    if nickname and not parser.author_name:
+        parser.author_name = nickname
+    if not parser.published_at:
+        parser.published_at = normalize_timestamp(note.get("time") or note.get("lastUpdateTime"))
+    interact = note.get("interactInfo") if isinstance(note.get("interactInfo"), dict) else {}
+    if isinstance(interact, dict):
+        parser.metrics["likes"] = parser.metrics["likes"] if parser.metrics["likes"] is not None else parse_metric(str(interact.get("likedCount", "")))
+        parser.metrics["collects"] = (
+            parser.metrics["collects"] if parser.metrics["collects"] is not None else parse_metric(str(interact.get("collectedCount", "")))
+        )
+        parser.metrics["comments"] = (
+            parser.metrics["comments"] if parser.metrics["comments"] is not None else parse_metric(str(interact.get("commentCount", "")))
+        )
+        parser.metrics["shares"] = (
+            parser.metrics["shares"] if parser.metrics["shares"] is not None else parse_metric(str(interact.get("shareCount", "")))
+        )
+    image_list = note.get("imageList")
+    if isinstance(image_list, list) and not parser.images:
+        parser.images = [
+            {
+                "position": index + 1,
+                "remote_url": "<redacted>",
+                "alt": "",
+                "download_status": "skipped_sensitive_url",
+                "source": "hydration_state",
+            }
+            for index, _item in enumerate(image_list)
+        ]
+    video = note.get("video")
+    if isinstance(video, dict) and not parser.video:
+        parser.video = {
+            "evidence": "hydration_state",
+            "download_status": "skipped_sensitive_url",
+            "has_media": bool(video.get("media") or video.get("mediaV2")),
+        }
+    comments = hydration.get("comments")
+    if isinstance(comments, list) and not parser.comments:
+        for item in comments[: parser.comment_limit]:
+            if isinstance(item, dict):
+                content = text_value(item.get("content"))
+                if content:
+                    parser.comments.append({"content": content})
+
+
+def text_value(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def normalize_timestamp(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None

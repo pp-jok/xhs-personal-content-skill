@@ -39,6 +39,9 @@ def save_visible_images(page: Any, result: BrowserCaptureResult, output_dir: Pat
     failures = 0
     for index, image in enumerate(result.images, start=1):
         remote_url = str(image.get("remote_url") or "")
+        if remote_url == "<redacted>" or image.get("download_status") == "skipped_sensitive_url":
+            image["download_status"] = "skipped_sensitive_url"
+            continue
         if not remote_url.startswith(("http://", "https://")):
             image["download_status"] = "skipped"
             continue

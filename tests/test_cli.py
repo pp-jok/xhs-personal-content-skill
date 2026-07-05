@@ -461,13 +461,13 @@ class CliTests(unittest.TestCase):
                     "--workspace",
                     temp_dir,
                     "--url",
-                    "https://www.xiaohongshu.com/explore/test-note?xsec_token=secret",
+                    "https://www.xiaohongshu.com/explore/test-note?debug_param=redacted",
                     "--user-intent",
                     "学习标题",
                 ]
             )
             browser_result = BrowserCaptureResult(
-                source_url="https://www.xiaohongshu.com/explore/test-note?xsec_token=secret",
+                source_url="https://www.xiaohongshu.com/explore/test-note?debug_param=redacted",
                 canonical_url="https://www.xiaohongshu.com/explore/test-note",
                 capture_status="success",
                 title="真实浏览器标题",

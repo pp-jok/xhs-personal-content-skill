@@ -34,6 +34,23 @@ class FakePage:
         Path(path).write_bytes(b"fake screenshot")
 
 
+class FakeHydrationPage(FakePage):
+    def content(self) -> str:
+        return """
+        <script>
+        window.__INITIAL_STATE__ = {"note":{"noteDetailMap":{"note123":{"comments":[],"note":{
+          "noteId":"note123",
+          "type":"normal",
+          "title":"图片标题",
+          "desc":"图片正文",
+          "user":{"nickname":"作者"},
+          "interactInfo":{"likedCount":"1","collectedCount":"1","commentCount":"0","shareCount":"0"},
+          "imageList":[{"url":"https://media.example/image.jpg"}]
+        }}}}};
+        </script>
+        """
+
+
 class XhsPageReaderTests(unittest.TestCase):
     def test_records_media_download_failure_without_failing_capture(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -47,6 +64,18 @@ class XhsPageReaderTests(unittest.TestCase):
             self.assertEqual(result.images[0]["download_status"], "failed")
             self.assertEqual(result.diagnostics["media_download_status"], "failed")
             self.assertTrue((Path(temp_dir) / "diagnostics.json").exists())
+
+    def test_preserves_sensitive_media_skip_status_for_hydration_images(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = read_xhs_page(
+                FakeHydrationPage(),
+                source_url="https://www.xiaohongshu.com/explore/note123",
+                output_dir=Path(temp_dir),
+            )
+
+            self.assertEqual(result.capture_status, "success")
+            self.assertEqual(result.images[0]["remote_url"], "<redacted>")
+            self.assertEqual(result.images[0]["download_status"], "skipped_sensitive_url")
 
 
 if __name__ == "__main__":
