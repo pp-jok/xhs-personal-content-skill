@@ -12,6 +12,8 @@ Phase 12 增加用户授权 Chrome 单链接采集。无 `--manual-file` 时，`
 
 Phase 11 增加质量评价和质量周报。它用于记录人工判断、修改成本和规则命中情况，不用生成数量冒充质量提升。
 
+MVP PR-1 增加最小来源追踪、用户决策和对象版本快照。候选规则等事项可以先进入待确认状态，用户确认后再影响长期规则。
+
 CLI 只读写本地 JSON 文件，不调用真实模型 API，不自动发布。
 
 CLI 不替代 Codex 做高质量生成。`run-workflow` 和 `validate-real-sample` 中的生成链路仍主要用于本地流程验证。
@@ -52,6 +54,90 @@ python3 -m app.cli.main list creator-profiles
 ```bash
 python3 -m app.cli.main show creator-profiles creator-main
 ```
+
+## 查看来源追踪
+
+```bash
+python3 -m app.cli.main show-provenance \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --target-type rule_card \
+  --target-id rule-card-001
+```
+
+来源记录会区分：
+
+- `actor`：谁产生，例如 `user`、`codex`、`system`。
+- `artifact_nature`：内容性质，例如 `fact`、`inference`、`generated`、`decision`。
+
+不要把 `codex + inference` 当作 `user + fact`。
+
+## 创建和处理用户决策
+
+创建待决策事项：
+
+```bash
+python3 -m app.cli.main create-decision \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --target-type rule_card \
+  --target-id rule-card-001 \
+  --question "是否确认这条候选规则？" \
+  --option confirm \
+  --option reject \
+  --recommendation confirm \
+  --recommendation-reason "证据清晰，但仍需要你确认是否适合账号。" \
+  --impact "确认后进入长期规则；拒绝后不参与后续生成。"
+```
+
+查看待决策事项：
+
+```bash
+python3 -m app.cli.main list-decisions \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --status pending
+```
+
+确认或拒绝：
+
+```bash
+python3 -m app.cli.main resolve-decision \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --decision-id decision-xxxx \
+  --selected-option confirm \
+  --user-note "这条适合我的账号"
+```
+
+第一版只对 `rule_card` 做确定性状态更新：`confirm` 会把候选规则更新为 `approved`，`reject` 会更新为 `rejected`。
+
+## 查看对象版本
+
+```bash
+python3 -m app.cli.main show-object-versions \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --collection rule-cards \
+  --record-id rule-card-001
+```
+
+当前只为 `creator-profiles`、`rule-cards` 和 `content-drafts` 保存更新前快照。
+
+## 查看用户态上下文
+
+```bash
+python3 -m app.cli.main show-user-context \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --collection rule-cards \
+  --record-id rule-card-001
+```
+
+输出按用户可理解区块组织，例如：
+
+- `【已有资料】`
+- `【规则约束】`
+- `【客观数据】`
+- `【Codex 判断】`
+- `【Codex 生成】`
+- `【需要你决定】`
+- `【已由你确认】`
+- `【信息不足】`
 
 ## 初始化账号工作区
 

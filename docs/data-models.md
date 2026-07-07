@@ -2,7 +2,7 @@
 
 ## 通用规则
 
-- 每个模型都有 `id`、`created_at`、`updated_at`。
+- 每个模型都有 `id`、`schema_version`、`version`、`created_by`、`provenance_refs`、`created_at`、`updated_at`。
 - 每个模型都支持低门槛录入元数据：`missing_fields`、`confidence`、`source_type`、`source_note`、`user_reason`、`created_from`。
 - 每条记录存为一个 JSON 文件。
 - 标签字段统一保存标签 `id` 列表。
@@ -21,6 +21,9 @@
 - `source_note`：来源补充说明。
 - `user_reason`：用户给出的选择、喜欢或不喜欢原因。
 - `created_from`：创建来源，例如 `add-feedback`、`manual-intake`、`validate-real-sample`。
+- `created_by`：创建者，例如 `user`、`codex`、`system`、`migration`、`external_source`。
+- `provenance_refs`：关联的来源记录 id 列表。
+- `version`：对象版本，更新时递增。
 
 原则：
 
@@ -111,6 +114,36 @@
 基础校验：规则、来源、来源片段、证据类型、可见事实和推断不能为空；来源类型必须是 `benchmark_post`、`benchmark_analysis`、`user_feedback`、`own_post`、`review_record` 之一。
 
 说明：`observable_fact` 只保存真实可见内容，`inference` 保存由 Codex 或运营人员做出的判断。
+
+## ProvenanceRecord
+
+用途：记录对象来源，帮助用户区分已有资料、客观事实、Codex 判断、生成内容和用户决策。
+
+字段：`id`、`target_object_type`、`target_object_id`、`source_object_type`、`source_object_id`、`source_version`、`actor`、`artifact_nature`、`method`、`note`。
+
+基础校验：目标对象、来源对象和方法不能为空；`actor` 必须是 `user`、`codex`、`system`、`migration`、`external_source` 之一；`artifact_nature` 必须是 `fact`、`derived`、`inference`、`generated`、`recommendation`、`decision` 之一。
+
+说明：`actor` 和 `artifact_nature` 必须分开。例如 Codex 可以产生 `inference`，但不能把它写成用户确认的事实。
+
+## DecisionRequest
+
+用途：记录需要用户明确确认或拒绝的事项，尤其是候选规则是否进入长期规则。
+
+字段：`id`、`target_object_type`、`target_object_id`、`question`、`options`、`recommendation`、`recommendation_reason`、`impact`、`status`、`selected_option`、`user_note`、`resulting_state_changes`、`resolved_at`。
+
+基础校验：问题、选项、推荐理由和影响不能为空；选项至少 2 个；推荐和用户选择必须来自选项；状态必须是 `pending`、`confirmed`、`rejected`、`cancelled`、`superseded` 之一。
+
+说明：候选规则不能因为存在于文件中就视为已确认。只有用户确认后的状态变化才可写入 `resulting_state_changes`。
+
+## ObjectVersion
+
+用途：保存重要对象更新前快照，便于追溯账号档案、规则卡片和内容草稿的变化。
+
+字段：`id`、`target_object_type`、`target_object_id`、`object_version`、`snapshot`、`changed_by`、`change_note`。
+
+基础校验：目标对象、版本号和快照不能为空；`snapshot` 必须是对象。
+
+说明：第一版只为 `CreatorProfile`、`RuleCard` 和 `ContentDraft` 保存更新前快照，不做完整恢复界面。
 
 ## TopicItem
 

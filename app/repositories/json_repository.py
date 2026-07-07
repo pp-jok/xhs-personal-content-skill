@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from app.models.core import BaseModel, now_iso
+from app.models.core import BaseModel, ObjectVersion, now_iso
 
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+
+VERSIONED_COLLECTIONS = {"creator-profiles", "rule-cards", "content-drafts"}
 
 
 class NotFoundError(FileNotFoundError):
@@ -44,11 +46,13 @@ class JsonRepository(Generic[ModelT]):
 
     def update(self, record_id: str, changes: dict[str, object]) -> ModelT:
         current = self.read(record_id)
+        self._write_version_snapshot(current)
         data = current.to_dict()
         data.update(changes)
         data["id"] = record_id
         data["created_at"] = current.created_at
         data["updated_at"] = now_iso()
+        data["version"] = current.version + 1
         updated = self.model_type.from_dict(data)
         self._write(updated)
         return updated
@@ -81,3 +85,22 @@ class JsonRepository(Generic[ModelT]):
     def _ensure_model_type(self, model: ModelT) -> None:
         if not isinstance(model, self.model_type):
             raise TypeError(f"Expected {self.model_type.__name__}")
+
+    def _write_version_snapshot(self, model: ModelT) -> None:
+        if self.model_type.collection_name not in VERSIONED_COLLECTIONS:
+            return
+        versions_dir = self.data_dir / ObjectVersion.collection_name
+        versions_dir.mkdir(parents=True, exist_ok=True)
+        version_id = f"{self.model_type.collection_name}-{model.id}-v{model.version}"
+        snapshot = ObjectVersion(
+            id=version_id,
+            target_object_type=self.model_type.collection_name,
+            target_object_id=model.id,
+            object_version=model.version,
+            snapshot=model.to_dict(),
+            changed_by="system",
+            change_note="snapshot before update",
+        )
+        with (versions_dir / f"{version_id}.json").open("w", encoding="utf-8") as file:
+            json.dump(snapshot.to_dict(), file, ensure_ascii=False, indent=2)
+            file.write("\n")

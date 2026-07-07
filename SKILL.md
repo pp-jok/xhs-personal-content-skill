@@ -32,6 +32,19 @@ Every normal response should follow this shape when applicable:
 
 Use concise Chinese by default. Avoid engineering vocabulary unless the user explicitly asks for it.
 
+When a response mixes saved account memory, observed post facts, Codex judgment, generated text, or pending choices, group them with plain user-facing labels:
+
+- `【已有资料】`
+- `【规则约束】`
+- `【客观数据】`
+- `【Codex 判断】`
+- `【Codex 生成】`
+- `【需要你决定】`
+- `【已由你确认】`
+- `【信息不足】`
+
+Do not label every sentence. Use only the sections that help the user decide. Candidate rules must stay under `【需要你决定】` until the user confirms them.
+
 Good default phrases:
 
 - “我已把这部分加入你的账号资料。”
@@ -377,9 +390,10 @@ Action:
 5. Use `add-feedback` for structured feedback capture.
 6. When a candidate rule comes from captured-post analysis, use `create-rule-from-analysis` to create both the rule card and evidence.
 7. Use lifecycle commands for explicit user decisions: `approve-rule`, `mark-rule-testing`, `record-rule-result`, `reject-rule`, or `deprecate-rule`.
-8. Use `check-rule-relations` before claiming that rules conflict; repeated summaries with different applicable scenarios are not automatically conflicts.
-9. Prefer updating existing rules over creating duplicates.
-10. Reply with: what rule changed, what evidence supports it, current status, and how it will affect future output.
+8. For candidate rules that need an explicit choice, create a `DecisionRequest` with `create-decision`; use `resolve-decision` when the user confirms or rejects it.
+9. Use `check-rule-relations` before claiming that rules conflict; repeated summaries with different applicable scenarios are not automatically conflicts.
+10. Prefer updating existing rules over creating duplicates.
+11. Reply with: what rule changed, what evidence supports it, current status, and how it will affect future output.
 
 Rule lifecycle:
 

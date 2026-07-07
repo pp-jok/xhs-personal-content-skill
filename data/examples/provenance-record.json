@@ -1,0 +1,12 @@
+{
+  "id": "provenance-001",
+  "target_object_type": "rule_card",
+  "target_object_id": "rule-card-001",
+  "source_object_type": "benchmark_analysis",
+  "source_object_id": "benchmark-analysis-001",
+  "source_version": 1,
+  "actor": "codex",
+  "artifact_nature": "inference",
+  "method": "mvp-pr1-example",
+  "note": "Codex 基于可见事实提出候选规则。"
+}

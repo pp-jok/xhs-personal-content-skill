@@ -22,8 +22,11 @@ from app.models.core import (
     ContentQualityReview,
     CreatorProfile,
     CustomTag,
+    DecisionRequest,
+    ObjectVersion,
     OwnPost,
     PublishTask,
+    ProvenanceRecord,
     ReviewRecord,
     RuleCard,
     RuleEvidence,
@@ -79,6 +82,47 @@ def build_parser() -> argparse.ArgumentParser:
     show_parser.add_argument("collection", choices=sorted(MODEL_TYPES), help="Collection name.")
     show_parser.add_argument("record_id", help="Record id.")
     show_parser.set_defaults(handler=handle_show)
+
+    provenance_parser = subparsers.add_parser("show-provenance", help="Show provenance records for one object.")
+    provenance_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    provenance_parser.add_argument("--target-type", required=True, help="Target object type, for example rule_card.")
+    provenance_parser.add_argument("--target-id", required=True, help="Target object id.")
+    provenance_parser.set_defaults(handler=handle_show_provenance)
+
+    create_decision_parser = subparsers.add_parser("create-decision", help="Create a pending user decision.")
+    create_decision_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    create_decision_parser.add_argument("--target-type", required=True, help="Target object type.")
+    create_decision_parser.add_argument("--target-id", required=True, help="Target object id.")
+    create_decision_parser.add_argument("--question", required=True, help="Decision question.")
+    create_decision_parser.add_argument("--option", action="append", required=True, help="Decision option, repeatable.")
+    create_decision_parser.add_argument("--recommendation", required=True, help="Recommended option.")
+    create_decision_parser.add_argument("--recommendation-reason", required=True, help="Reason for recommendation.")
+    create_decision_parser.add_argument("--impact", required=True, help="Impact after the decision.")
+    create_decision_parser.set_defaults(handler=handle_create_decision)
+
+    list_decisions_parser = subparsers.add_parser("list-decisions", help="List user decisions.")
+    list_decisions_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    list_decisions_parser.add_argument("--status", help="Optional decision status filter.")
+    list_decisions_parser.set_defaults(handler=handle_list_decisions)
+
+    resolve_decision_parser = subparsers.add_parser("resolve-decision", help="Confirm or reject a pending user decision.")
+    resolve_decision_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    resolve_decision_parser.add_argument("--decision-id", required=True, help="DecisionRequest id.")
+    resolve_decision_parser.add_argument("--selected-option", required=True, help="Selected decision option.")
+    resolve_decision_parser.add_argument("--user-note", default="", help="Optional user note.")
+    resolve_decision_parser.set_defaults(handler=handle_resolve_decision)
+
+    versions_parser = subparsers.add_parser("show-object-versions", help="Show stored version snapshots for one object.")
+    versions_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    versions_parser.add_argument("--collection", choices=sorted(MODEL_TYPES), required=True, help="Collection name.")
+    versions_parser.add_argument("--record-id", required=True, help="Record id.")
+    versions_parser.set_defaults(handler=handle_show_object_versions)
+
+    user_context_parser = subparsers.add_parser("show-user-context", help="Show one object with user-facing context sections.")
+    user_context_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    user_context_parser.add_argument("--collection", choices=sorted(MODEL_TYPES), required=True, help="Collection name.")
+    user_context_parser.add_argument("--record-id", required=True, help="Record id.")
+    user_context_parser.set_defaults(handler=handle_show_user_context)
 
     workflow_parser = subparsers.add_parser("run-workflow", help="Run benchmark-to-publish local workflow.")
     workflow_parser.add_argument("--creator-id", required=True, help="CreatorProfile id.")
@@ -259,6 +303,115 @@ def handle_show(args: argparse.Namespace) -> dict[str, Any]:
     model_type = get_model_type(args.collection)
     repo = JsonRepository(args.data_dir, model_type)
     return repo.read(args.record_id).to_dict()
+
+
+def handle_show_provenance(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    records = [
+        item
+        for item in JsonRepository(workspace, ProvenanceRecord).list_all()
+        if item.target_object_type == args.target_type and item.target_object_id == args.target_id
+    ]
+    return {
+        "target": {"object_type": args.target_type, "object_id": args.target_id},
+        "records": [item.to_dict() for item in records],
+    }
+
+
+def handle_create_decision(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    decision_id = build_decision_id(args.target_type, args.target_id, args.question)
+    decision = DecisionRequest(
+        id=decision_id,
+        target_object_type=args.target_type,
+        target_object_id=args.target_id,
+        question=args.question,
+        options=args.option,
+        recommendation=args.recommendation,
+        recommendation_reason=args.recommendation_reason,
+        impact=args.impact,
+        created_by="codex",
+        source_type="codex_recommendation",
+        created_from="create-decision",
+    )
+    saved = JsonRepository(workspace, DecisionRequest).upsert(decision)
+    return {"decision_id": saved.id, "status": saved.status, "target_object_id": saved.target_object_id}
+
+
+def handle_list_decisions(args: argparse.Namespace) -> list[dict[str, Any]]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    decisions = JsonRepository(workspace, DecisionRequest).list_all()
+    if args.status:
+        decisions = [item for item in decisions if item.status == args.status]
+    return [item.to_dict() for item in decisions]
+
+
+def handle_resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    repo = JsonRepository(workspace, DecisionRequest)
+    decision = repo.read(args.decision_id)
+    selected = args.selected_option
+    if selected not in decision.options:
+        raise ValueError("selected option must be one of the decision options")
+
+    status = "confirmed" if selected in {"confirm", "approve", "approved"} else "rejected"
+    changes = apply_decision_result(workspace, decision, selected)
+    updated = repo.update(
+        decision.id,
+        {
+            "status": status,
+            "selected_option": selected,
+            "user_note": args.user_note,
+            "resolved_at": now_iso(),
+            "resulting_state_changes": changes,
+        },
+    )
+    return {
+        "decision_id": updated.id,
+        "status": updated.status,
+        "selected_option": updated.selected_option,
+        "resulting_state_changes": updated.resulting_state_changes,
+    }
+
+
+def handle_show_object_versions(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    versions = [
+        item
+        for item in JsonRepository(workspace, ObjectVersion).list_all()
+        if item.target_object_type == args.collection and item.target_object_id == args.record_id
+    ]
+    versions.sort(key=lambda item: item.object_version)
+    return {
+        "target": {"collection": args.collection, "record_id": args.record_id},
+        "versions": [item.to_dict() for item in versions],
+    }
+
+
+def handle_show_user_context(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    model_type = get_model_type(args.collection)
+    item = JsonRepository(workspace, model_type).read(args.record_id)
+    provenance = [
+        record
+        for record in JsonRepository(workspace, ProvenanceRecord).list_all()
+        if record.target_object_id == item.id
+    ]
+    decisions = [
+        decision
+        for decision in JsonRepository(workspace, DecisionRequest).list_all()
+        if decision.target_object_id == item.id
+    ]
+    return {
+        "target": {"collection": args.collection, "record_id": args.record_id},
+        "sections": build_user_context_sections(item, provenance, decisions),
+    }
 
 
 def handle_run_workflow(args: argparse.Namespace) -> dict[str, Any]:
@@ -869,6 +1022,75 @@ def summarize_rule(rule: RuleCard) -> dict[str, Any]:
 
 def build_inbox_id(url: str) -> str:
     return "inbox-" + sha1(url.encode("utf-8")).hexdigest()[:12]
+
+
+def build_decision_id(target_type: str, target_id: str, question: str) -> str:
+    key = f"{target_type}:{target_id}:{question}"
+    return "decision-" + sha1(key.encode("utf-8")).hexdigest()[:12]
+
+
+def apply_decision_result(workspace: Path, decision: DecisionRequest, selected_option: str) -> list[dict[str, Any]]:
+    if decision.target_object_type != "rule_card":
+        return []
+    repo = JsonRepository(workspace, RuleCard)
+    target_status = "approved" if selected_option in {"confirm", "approve", "approved"} else "rejected"
+    rule = repo.update(decision.target_object_id, {"status": target_status})
+    return [
+        {
+            "target_object_type": decision.target_object_type,
+            "target_object_id": decision.target_object_id,
+            "field": "status",
+            "value": rule.status,
+        }
+    ]
+
+
+def build_user_context_sections(
+    item: BaseModel,
+    provenance: list[ProvenanceRecord],
+    decisions: list[DecisionRequest],
+) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {
+        "【已有资料】": [],
+        "【规则约束】": [],
+        "【客观数据】": [],
+        "【Codex 判断】": [],
+        "【Codex 生成】": [],
+        "【需要你决定】": [],
+        "【已由你确认】": [],
+        "【信息不足】": [],
+    }
+    data = item.to_dict()
+    label = str(data.get("name") or data.get("title") or item.id)
+    sections["【已有资料】"].append(f"{label}（版本 {item.version}）")
+    if item.missing_fields:
+        sections["【信息不足】"].extend(item.missing_fields)
+
+    if isinstance(item, RuleCard):
+        sections["【规则约束】"].append(item.rule_summary)
+        if item.status == "candidate":
+            sections["【需要你决定】"].append("候选规则，需要确认后才会长期生效。")
+        elif item.status in {"approved", "testing", "validated"}:
+            sections["【已由你确认】"].append(f"规则当前状态：{item.status}")
+            sections["【需要你决定】"].append("候选规则已处理；如后续效果不好，可以再拒绝或废弃。")
+        elif item.status in {"rejected", "deprecated"}:
+            sections["【已由你确认】"].append(f"这条规则已标记为：{item.status}")
+
+    for record in provenance:
+        if record.artifact_nature == "fact":
+            sections["【客观数据】"].append(record.note or f"来自 {record.source_object_type}")
+        elif record.artifact_nature in {"inference", "recommendation"}:
+            sections["【Codex 判断】"].append(record.note or f"由 {record.actor} 产生")
+        elif record.artifact_nature == "generated":
+            sections["【Codex 生成】"].append(record.note or f"由 {record.actor} 生成")
+
+    for decision in decisions:
+        if decision.status == "pending":
+            sections["【需要你决定】"].append(decision.question)
+        elif decision.status in {"confirmed", "rejected"}:
+            sections["【已由你确认】"].append(f"{decision.question} -> {decision.selected_option}")
+
+    return sections
 
 
 def build_prompt_service(prompts_dir: str | Path) -> MockPromptService:

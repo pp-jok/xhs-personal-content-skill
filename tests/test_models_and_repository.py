@@ -18,8 +18,11 @@ from app.models.core import (  # noqa: E402
     CreatorProfile,
     CustomTag,
     MODEL_TYPES,
+    DecisionRequest,
+    ObjectVersion,
     OwnPost,
     PublishTask,
+    ProvenanceRecord,
     ReviewRecord,
     RuleCard,
     RuleEvidence,
@@ -42,7 +45,10 @@ EXAMPLE_TO_MODEL = {
     "topic-item.json": TopicItem,
     "content-draft.json": ContentDraft,
     "content-quality-review.json": ContentQualityReview,
+    "decision-request.json": DecisionRequest,
+    "object-version.json": ObjectVersion,
     "publish-task.json": PublishTask,
+    "provenance-record.json": ProvenanceRecord,
     "own-post.json": OwnPost,
     "review-record.json": ReviewRecord,
 }
@@ -110,16 +116,109 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(data["missing_fields"], ["forbidden_expressions"])
         self.assertEqual(data["confidence"], 0.6)
         self.assertEqual(data["source_type"], "user_input")
+        self.assertEqual(data["schema_version"], "1.3.0")
+        self.assertEqual(data["version"], 1)
+        self.assertEqual(data["provenance_refs"], [])
+        self.assertEqual(data["created_by"], "user")
 
     def test_collection_names_are_unique(self) -> None:
-        self.assertEqual(len(MODEL_TYPES), 15)
+        self.assertEqual(len(MODEL_TYPES), 18)
         self.assertEqual(MODEL_TYPES["creator-profiles"], CreatorProfile)
         self.assertEqual(MODEL_TYPES["benchmark-analyses"], BenchmarkAnalysis)
         self.assertEqual(MODEL_TYPES["content-inbox"], ContentInboxItem)
         self.assertEqual(MODEL_TYPES["content-quality-reviews"], ContentQualityReview)
         self.assertEqual(MODEL_TYPES["capture-records"], CaptureRecord)
+        self.assertEqual(MODEL_TYPES["decision-requests"], DecisionRequest)
+        self.assertEqual(MODEL_TYPES["object-versions"], ObjectVersion)
+        self.assertEqual(MODEL_TYPES["provenance-records"], ProvenanceRecord)
         self.assertEqual(MODEL_TYPES["rule-evidence"], RuleEvidence)
         self.assertEqual(MODEL_TYPES["review-records"], ReviewRecord)
+
+    def test_provenance_record_keeps_actor_and_artifact_nature_separate(self) -> None:
+        provenance = ProvenanceRecord(
+            id="prov-001",
+            target_object_type="rule_card",
+            target_object_id="rule-001",
+            source_object_type="benchmark_analysis",
+            source_object_id="analysis-001",
+            source_version=2,
+            actor="codex",
+            artifact_nature="inference",
+            method="manual-review-v1",
+            note="Codex 判断来自可见事实，不是用户事实。",
+        )
+
+        self.assertEqual(provenance.actor, "codex")
+        self.assertEqual(provenance.artifact_nature, "inference")
+
+        with self.assertRaises(ValidationError):
+            ProvenanceRecord(
+                id="prov-invalid",
+                target_object_type="rule_card",
+                target_object_id="rule-001",
+                source_object_type="benchmark_analysis",
+                source_object_id="analysis-001",
+                actor="codex",
+                artifact_nature="user",
+                method="manual-review-v1",
+                note="actor and nature cannot be collapsed.",
+            )
+
+    def test_decision_request_status_and_selected_option_are_validated(self) -> None:
+        decision = DecisionRequest(
+            id="decision-001",
+            target_object_type="rule_card",
+            target_object_id="rule-001",
+            question="是否确认这条规则？",
+            options=["confirm", "reject"],
+            recommendation="confirm",
+            recommendation_reason="证据清晰。",
+            impact="确认后用于后续标题生成。",
+        )
+
+        self.assertEqual(decision.status, "pending")
+        self.assertEqual(decision.options, ["confirm", "reject"])
+
+        with self.assertRaises(ValidationError):
+            DecisionRequest(
+                id="decision-invalid",
+                target_object_type="rule_card",
+                target_object_id="rule-001",
+                question="是否确认？",
+                options=["confirm"],
+                recommendation="confirm",
+                recommendation_reason="证据清晰。",
+                impact="确认后生效。",
+                status="confirmed",
+                selected_option="other",
+            )
+
+    def test_repository_update_preserves_previous_version_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = JsonRepository(temp_dir, RuleCard)
+            rule = RuleCard(
+                id="rule-versioned",
+                name="候选标题规则",
+                type="title",
+                source_ids=["analysis-001"],
+                applicable_scenarios=["标题"],
+                rule_summary="标题要像真人经验。",
+                examples=["我试过后发现..."],
+                risks=["不能夸张承诺"],
+                adaptation_notes="适合账号口吻。",
+                status="candidate",
+            )
+            repo.create(rule)
+
+            updated = repo.update("rule-versioned", {"status": "approved"})
+            versions = JsonRepository(temp_dir, ObjectVersion).list_all()
+
+            self.assertEqual(updated.version, 2)
+            self.assertEqual(len(versions), 1)
+            self.assertEqual(versions[0].target_object_type, "rule-cards")
+            self.assertEqual(versions[0].target_object_id, "rule-versioned")
+            self.assertEqual(versions[0].object_version, 1)
+            self.assertEqual(versions[0].snapshot["status"], "candidate")
 
     def test_content_quality_review_rejects_score_out_of_range(self) -> None:
         with self.assertRaises(ValidationError):

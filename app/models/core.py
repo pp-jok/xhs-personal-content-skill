@@ -29,6 +29,9 @@ InboxStatus = Literal["inbox", "capturing", "captured", "analyzed", "promoted_to
 CaptureStatus = Literal["pending", "success", "partial", "failed"]
 CaptureMethod = Literal["manual", "browser_authorized"]
 CapturedContentType = Literal["unknown", "image", "video", "mixed"]
+Actor = Literal["user", "codex", "system", "migration", "external_source"]
+ArtifactNature = Literal["fact", "derived", "inference", "generated", "recommendation", "decision"]
+DecisionStatus = Literal["pending", "confirmed", "rejected", "cancelled", "superseded"]
 AnalysisTemplate = Literal[
     "video_tutorial",
     "video_personal_story",
@@ -95,6 +98,10 @@ def ensure_score(value: int, field_name: str) -> None:
 @dataclass
 class BaseModel:
     id: str
+    schema_version: str = "1.3.0"
+    version: int = 1
+    created_by: Actor = "user"
+    provenance_refs: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
     missing_fields: list[str] = field(default_factory=list)
@@ -108,6 +115,12 @@ class BaseModel:
 
     def __post_init__(self) -> None:
         require_text(self.id, "id")
+        require_text(self.schema_version, "schema_version")
+        ensure_non_negative_int(self.version, "version")
+        if self.version < 1:
+            raise ValidationError("version must be at least 1")
+        require_literal(self.created_by, Actor, "created_by")
+        ensure_list_items_are_text(self.provenance_refs, "provenance_refs")
         require_text(self.created_at, "created_at")
         require_text(self.updated_at, "updated_at")
         ensure_list_items_are_text(self.missing_fields, "missing_fields")
@@ -442,6 +455,96 @@ class RuleEvidence(BaseModel):
 
 
 @dataclass
+class ProvenanceRecord(BaseModel):
+    collection_name: ClassVar[str] = "provenance-records"
+
+    target_object_type: str = ""
+    target_object_id: str = ""
+    source_object_type: str = ""
+    source_object_id: str = ""
+    source_version: int = 1
+    actor: Actor = "system"
+    artifact_nature: ArtifactNature = "fact"
+    method: str = ""
+    note: str = ""
+
+    def validate(self) -> None:
+        require_text(self.target_object_type, "target_object_type")
+        require_text(self.target_object_id, "target_object_id")
+        require_text(self.source_object_type, "source_object_type")
+        require_text(self.source_object_id, "source_object_id")
+        ensure_non_negative_int(self.source_version, "source_version")
+        if self.source_version < 1:
+            raise ValidationError("source_version must be at least 1")
+        require_literal(self.actor, Actor, "actor")
+        require_literal(self.artifact_nature, ArtifactNature, "artifact_nature")
+        require_text(self.method, "method")
+        ensure_optional_text(self.note, "note")
+
+
+@dataclass
+class DecisionRequest(BaseModel):
+    collection_name: ClassVar[str] = "decision-requests"
+
+    target_object_type: str = ""
+    target_object_id: str = ""
+    question: str = ""
+    options: list[str] = field(default_factory=list)
+    recommendation: str = ""
+    recommendation_reason: str = ""
+    impact: str = ""
+    status: DecisionStatus = "pending"
+    selected_option: str = ""
+    user_note: str = ""
+    resulting_state_changes: list[dict[str, Any]] = field(default_factory=list)
+    resolved_at: str | None = None
+
+    def validate(self) -> None:
+        require_text(self.target_object_type, "target_object_type")
+        require_text(self.target_object_id, "target_object_id")
+        require_text(self.question, "question")
+        ensure_list_items_are_text(self.options, "options")
+        if len(self.options) < 2:
+            raise ValidationError("options must contain at least two choices")
+        require_text(self.recommendation, "recommendation")
+        if self.recommendation not in self.options:
+            raise ValidationError("recommendation must be one of options")
+        require_text(self.recommendation_reason, "recommendation_reason")
+        require_text(self.impact, "impact")
+        require_literal(self.status, DecisionStatus, "status")
+        ensure_optional_text(self.selected_option, "selected_option")
+        if self.selected_option and self.selected_option not in self.options:
+            raise ValidationError("selected_option must be one of options")
+        ensure_optional_text(self.user_note, "user_note")
+        require_list(self.resulting_state_changes, "resulting_state_changes")
+        for change in self.resulting_state_changes:
+            require_dict(change, "resulting_state_changes item")
+        ensure_optional_text(self.resolved_at, "resolved_at")
+
+
+@dataclass
+class ObjectVersion(BaseModel):
+    collection_name: ClassVar[str] = "object-versions"
+
+    target_object_type: str = ""
+    target_object_id: str = ""
+    object_version: int = 1
+    snapshot: dict[str, Any] = field(default_factory=dict)
+    changed_by: Actor = "system"
+    change_note: str = ""
+
+    def validate(self) -> None:
+        require_text(self.target_object_type, "target_object_type")
+        require_text(self.target_object_id, "target_object_id")
+        ensure_non_negative_int(self.object_version, "object_version")
+        if self.object_version < 1:
+            raise ValidationError("object_version must be at least 1")
+        require_dict(self.snapshot, "snapshot")
+        require_literal(self.changed_by, Actor, "changed_by")
+        ensure_optional_text(self.change_note, "change_note")
+
+
+@dataclass
 class TopicItem(BaseModel):
     collection_name: ClassVar[str] = "topic-pool"
 
@@ -612,6 +715,9 @@ MODEL_TYPES: dict[str, type[BaseModel]] = {
         CustomTag,
         RuleCard,
         RuleEvidence,
+        ProvenanceRecord,
+        DecisionRequest,
+        ObjectVersion,
         TopicItem,
         ContentDraft,
         ContentQualityReview,
