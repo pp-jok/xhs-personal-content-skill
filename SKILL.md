@@ -605,3 +605,15 @@ Before claiming completion, run relevant verification:
 python3 -m unittest discover -s tests -v
 PYTHONPYCACHEPREFIX=.pycache python3 -m compileall app tests
 ```
+
+## Development Governance
+
+When the task is to modify this Skill's source code, design or revise a PR, debug implementation behavior, or review repository changes, also read and follow:
+
+- `AGENTS.md`
+- `docs/architecture/invariants.md`
+- the relevant current plan under `docs/plans/`
+
+These files govern repository development and architecture. They do not replace the user-facing workflows in this file.
+
+For normal account-operation requests, continue following the user-facing behavior and triggered workflows defined in `SKILL.md`.
