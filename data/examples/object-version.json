@@ -1,6 +1,6 @@
 {
   "id": "rule-cards-rule-card-001-v1",
-  "target_object_type": "rule-cards",
+  "target_object_type": "rule_card",
   "target_object_id": "rule-card-001",
   "object_version": 1,
   "snapshot": {

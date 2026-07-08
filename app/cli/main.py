@@ -12,6 +12,7 @@ from app.capture import build_browser_capture_record, build_capture_record
 from app.capture.browser.cdp_client import DEFAULT_CDP_URL, capture_xhs_link_with_browser
 from app.models.core import (
     MODEL_TYPES,
+    Actor,
     BaseModel,
     BenchmarkAccount,
     BenchmarkAnalysis,
@@ -31,6 +32,7 @@ from app.models.core import (
     RuleCard,
     RuleEvidence,
     TopicItem,
+    ValidationError,
     now_iso,
 )
 from app.repositories import JsonRepository
@@ -46,6 +48,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_PROMPTS_DIR = PROJECT_ROOT / "prompts"
 REQUIRED_WORKSPACE_FILES = ("creator_profile.json", "benchmark_account.json", "benchmark_post.json", "custom_tags.json")
+OBJECT_TYPE_TO_MODEL: dict[str, type[BaseModel]] = {
+    "creator_profile": CreatorProfile,
+    "benchmark_account": BenchmarkAccount,
+    "benchmark_post": BenchmarkPost,
+    "content_inbox": ContentInboxItem,
+    "capture_record": CaptureRecord,
+    "benchmark_analysis": BenchmarkAnalysis,
+    "custom_tag": CustomTag,
+    "rule_card": RuleCard,
+    "rule_evidence": RuleEvidence,
+    "topic_item": TopicItem,
+    "content_draft": ContentDraft,
+    "content_quality_review": ContentQualityReview,
+    "publish_task": PublishTask,
+    "own_post": OwnPost,
+    "review_record": ReviewRecord,
+}
+COLLECTION_TO_OBJECT_TYPE = {model.collection_name: object_type for object_type, model in OBJECT_TYPE_TO_MODEL.items()}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -95,6 +115,12 @@ def build_parser() -> argparse.ArgumentParser:
     create_decision_parser.add_argument("--target-id", required=True, help="Target object id.")
     create_decision_parser.add_argument("--question", required=True, help="Decision question.")
     create_decision_parser.add_argument("--option", action="append", required=True, help="Decision option, repeatable.")
+    create_decision_parser.add_argument(
+        "--option-outcome",
+        action="append",
+        default=[],
+        help="Map an option label to a resolution, for example '确认使用=confirmed'.",
+    )
     create_decision_parser.add_argument("--recommendation", required=True, help="Recommended option.")
     create_decision_parser.add_argument("--recommendation-reason", required=True, help="Reason for recommendation.")
     create_decision_parser.add_argument("--impact", required=True, help="Impact after the decision.")
@@ -288,8 +314,10 @@ def handle_import_json(args: argparse.Namespace) -> dict[str, Any]:
     with Path(args.file).open("r", encoding="utf-8") as file:
         data = json.load(file)
     model = model_type.from_dict(data)
+    if isinstance(model, ProvenanceRecord):
+        validate_provenance_record(args.data_dir, model)
     repo = JsonRepository(args.data_dir, model_type)
-    saved = repo.upsert(model) if args.upsert else repo.create(model)
+    saved = repo.upsert(model, changed_by="migration", change_note="import-json --upsert") if args.upsert else repo.create(model)
     return {"collection": args.collection, "id": saved.id}
 
 
@@ -308,13 +336,14 @@ def handle_show(args: argparse.Namespace) -> dict[str, Any]:
 def handle_show_provenance(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
+    target_type = normalize_object_type(args.target_type)
     records = [
         item
         for item in JsonRepository(workspace, ProvenanceRecord).list_all()
-        if item.target_object_type == args.target_type and item.target_object_id == args.target_id
+        if item.target_object_type == target_type and item.target_object_id == args.target_id
     ]
     return {
-        "target": {"object_type": args.target_type, "object_id": args.target_id},
+        "target": {"object_type": target_type, "object_id": args.target_id},
         "records": [item.to_dict() for item in records],
     }
 
@@ -322,13 +351,20 @@ def handle_show_provenance(args: argparse.Namespace) -> dict[str, Any]:
 def handle_create_decision(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
-    decision_id = build_decision_id(args.target_type, args.target_id, args.question)
+    target_type = normalize_object_type(args.target_type)
+    assert_target_exists(workspace, target_type, args.target_id)
+    option_outcomes = parse_option_outcomes(args.option, args.option_outcome)
+    existing = find_existing_decision(workspace, target_type, args.target_id, args.question)
+    if existing and existing.status == "pending":
+        return {"decision_id": existing.id, "status": existing.status, "target_object_id": existing.target_object_id}
+    decision_id = build_decision_id(workspace, target_type, args.target_id, args.question)
     decision = DecisionRequest(
         id=decision_id,
-        target_object_type=args.target_type,
+        target_object_type=target_type,
         target_object_id=args.target_id,
         question=args.question,
         options=args.option,
+        option_outcomes=option_outcomes,
         recommendation=args.recommendation,
         recommendation_reason=args.recommendation_reason,
         impact=args.impact,
@@ -354,12 +390,14 @@ def handle_resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
     ensure_workspace_dirs(workspace)
     repo = JsonRepository(workspace, DecisionRequest)
     decision = repo.read(args.decision_id)
+    if decision.status != "pending":
+        raise ValueError("Only pending decisions can be resolved. Create a new DecisionRequest to change a past decision.")
     selected = args.selected_option
     if selected not in decision.options:
         raise ValueError("selected option must be one of the decision options")
 
-    status = "confirmed" if selected in {"confirm", "approve", "approved"} else "rejected"
-    changes = apply_decision_result(workspace, decision, selected)
+    status = decision.option_outcomes[selected]
+    changes = apply_decision_result(workspace, decision, status)
     updated = repo.update(
         decision.id,
         {
@@ -369,6 +407,8 @@ def handle_resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
             "resolved_at": now_iso(),
             "resulting_state_changes": changes,
         },
+        changed_by="user",
+        change_note="user resolved decision",
     )
     return {
         "decision_id": updated.id,
@@ -381,10 +421,11 @@ def handle_resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
 def handle_show_object_versions(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
+    target_type = COLLECTION_TO_OBJECT_TYPE[args.collection]
     versions = [
         item
         for item in JsonRepository(workspace, ObjectVersion).list_all()
-        if item.target_object_type == args.collection and item.target_object_id == args.record_id
+        if item.target_object_type == target_type and item.target_object_id == args.record_id
     ]
     versions.sort(key=lambda item: item.object_version)
     return {
@@ -398,19 +439,16 @@ def handle_show_user_context(args: argparse.Namespace) -> dict[str, Any]:
     ensure_workspace_dirs(workspace)
     model_type = get_model_type(args.collection)
     item = JsonRepository(workspace, model_type).read(args.record_id)
-    provenance = [
-        record
-        for record in JsonRepository(workspace, ProvenanceRecord).list_all()
-        if record.target_object_id == item.id
-    ]
+    target_type = COLLECTION_TO_OBJECT_TYPE[args.collection]
+    provenance, provenance_diagnostics = collect_provenance_for_object(workspace, item, target_type)
     decisions = [
         decision
         for decision in JsonRepository(workspace, DecisionRequest).list_all()
-        if decision.target_object_id == item.id
+        if decision.target_object_type == target_type and decision.target_object_id == item.id
     ]
     return {
         "target": {"collection": args.collection, "record_id": args.record_id},
-        "sections": build_user_context_sections(item, provenance, decisions),
+        "sections": build_user_context_sections(item, target_type, provenance, decisions, provenance_diagnostics),
     }
 
 
@@ -448,10 +486,10 @@ def handle_upsert_profile(args: argparse.Namespace) -> dict[str, Any]:
     ensure_workspace_dirs(workspace)
     data = read_json_object(Path(args.file), "creator profile")
     profile = CreatorProfile.from_dict(data)
-    JsonRepository(workspace, CreatorProfile).upsert(profile)
-    write_json(workspace / "creator_profile.json", profile.to_dict())
+    saved = JsonRepository(workspace, CreatorProfile).upsert(profile, changed_by="user", change_note="upsert-profile")
+    write_json(workspace / "creator_profile.json", saved.to_dict())
     status = workspace_status(workspace)
-    return {"id": profile.id, "workspace": str(workspace), "missing_required_files": status["missing_required_files"]}
+    return {"id": saved.id, "workspace": str(workspace), "missing_required_files": status["missing_required_files"]}
 
 
 def handle_add_benchmark_account(args: argparse.Namespace) -> dict[str, Any]:
@@ -688,18 +726,28 @@ def handle_create_rule_from_analysis(args: argparse.Namespace) -> dict[str, Any]
     ensure_workspace_dirs(workspace)
     analysis = JsonRepository(workspace, BenchmarkAnalysis).read(args.analysis_id)
     rule, evidence = build_rule_and_evidence_from_analysis(analysis, args.candidate_id)
-    saved_rule = JsonRepository(workspace, RuleCard).upsert(rule)
+    saved_rule = JsonRepository(workspace, RuleCard).upsert(
+        rule,
+        changed_by="codex",
+        change_note="create-rule-from-analysis",
+    )
     saved_evidence = JsonRepository(workspace, RuleEvidence).upsert(evidence)
     return {"rule_id": saved_rule.id, "evidence_id": saved_evidence.id, "status": saved_rule.status}
 
 
 def handle_approve_rule(args: argparse.Namespace) -> dict[str, Any]:
-    rule = update_rule_status(Path(args.workspace), args.rule_id, {"status": "approved", "strength": "medium"})
+    rule = update_rule_status(
+        Path(args.workspace),
+        args.rule_id,
+        {"status": "approved", "strength": "medium"},
+        changed_by="user",
+        change_note="approve-rule",
+    )
     return summarize_rule(rule)
 
 
 def handle_mark_rule_testing(args: argparse.Namespace) -> dict[str, Any]:
-    rule = update_rule_status(Path(args.workspace), args.rule_id, {"status": "testing"})
+    rule = update_rule_status(Path(args.workspace), args.rule_id, {"status": "testing"}, changed_by="user", change_note="mark-rule-testing")
     return summarize_rule(rule)
 
 
@@ -718,12 +766,18 @@ def handle_record_rule_result(args: argparse.Namespace) -> dict[str, Any]:
         changes["strength"] = "strong" if rule.success_count + 1 >= 2 else rule.strength
     else:
         changes["failure_count"] = rule.failure_count + 1
-    updated = repo.update(rule.id, changes)
+    updated = repo.update(rule.id, changes, changed_by="user", change_note=f"record-rule-result {args.result}")
     return summarize_rule(updated)
 
 
 def handle_reject_rule(args: argparse.Namespace) -> dict[str, Any]:
-    rule = update_rule_status(Path(args.workspace), args.rule_id, {"status": "rejected", "deprecated_reason": args.reason})
+    rule = update_rule_status(
+        Path(args.workspace),
+        args.rule_id,
+        {"status": "rejected", "deprecated_reason": args.reason},
+        changed_by="user",
+        change_note="reject-rule",
+    )
     return summarize_rule(rule)
 
 
@@ -1004,9 +1058,15 @@ def find_analysis_by_capture_id(items: list[BenchmarkAnalysis], capture_id: str)
     return None
 
 
-def update_rule_status(workspace: Path, rule_id: str, changes: dict[str, Any]) -> RuleCard:
+def update_rule_status(
+    workspace: Path,
+    rule_id: str,
+    changes: dict[str, Any],
+    changed_by: Actor = "system",
+    change_note: str = "update-rule-status",
+) -> RuleCard:
     ensure_workspace_dirs(workspace)
-    return JsonRepository(workspace, RuleCard).update(rule_id, changes)
+    return JsonRepository(workspace, RuleCard).update(rule_id, changes, changed_by=changed_by, change_note=change_note)
 
 
 def summarize_rule(rule: RuleCard) -> dict[str, Any]:
@@ -1024,17 +1084,99 @@ def build_inbox_id(url: str) -> str:
     return "inbox-" + sha1(url.encode("utf-8")).hexdigest()[:12]
 
 
-def build_decision_id(target_type: str, target_id: str, question: str) -> str:
+def normalize_object_type(value: str) -> str:
+    if value not in OBJECT_TYPE_TO_MODEL:
+        raise ValueError(f"Unsupported target object type: {value}")
+    return value
+
+
+def assert_target_exists(workspace: Path, target_type: str, target_id: str) -> BaseModel:
+    model_type = OBJECT_TYPE_TO_MODEL[target_type]
+    return JsonRepository(workspace, model_type).read(target_id)
+
+
+def validate_provenance_record(workspace: str | Path, record: ProvenanceRecord) -> None:
+    workspace_path = Path(workspace)
+    assert_target_exists(workspace_path, record.target_object_type, record.target_object_id)
+    assert_target_exists(workspace_path, record.source_object_type, record.source_object_id)
+
+
+def parse_option_outcomes(options: list[str], raw_mappings: list[str]) -> dict[str, str]:
+    mappings: dict[str, str] = {}
+    for raw_mapping in raw_mappings:
+        if "=" not in raw_mapping:
+            raise ValueError("option outcome must use option=resolution format")
+        option, outcome = raw_mapping.split("=", 1)
+        option = option.strip()
+        outcome = outcome.strip()
+        if option not in options:
+            raise ValueError("option outcome key must be one of the decision options")
+        if outcome not in {"confirmed", "rejected", "cancelled", "superseded"}:
+            raise ValueError("option outcome must be confirmed, rejected, cancelled, or superseded")
+        mappings[option] = outcome
+    if mappings:
+        missing = [option for option in options if option not in mappings]
+        if missing:
+            raise ValueError(f"missing option outcomes for: {', '.join(missing)}")
+        return mappings
+    # Backward compatibility for the original English CLI options. New labels should pass --option-outcome.
+    legacy = {
+        "confirm": "confirmed",
+        "approve": "confirmed",
+        "approved": "confirmed",
+        "reject": "rejected",
+        "rejected": "rejected",
+        "cancel": "cancelled",
+        "cancelled": "cancelled",
+        "supersede": "superseded",
+        "superseded": "superseded",
+    }
+    mappings = {option: legacy[option] for option in options if option in legacy}
+    if len(mappings) != len(options):
+        raise ValueError("custom decision options require explicit --option-outcome mappings")
+    return mappings
+
+
+def find_existing_decision(workspace: Path, target_type: str, target_id: str, question: str) -> DecisionRequest | None:
+    for decision in JsonRepository(workspace, DecisionRequest).list_all():
+        if (
+            decision.target_object_type == target_type
+            and decision.target_object_id == target_id
+            and decision.question == question
+            and decision.status == "pending"
+        ):
+            return decision
+    return None
+
+
+def build_decision_id(workspace: Path, target_type: str, target_id: str, question: str) -> str:
     key = f"{target_type}:{target_id}:{question}"
-    return "decision-" + sha1(key.encode("utf-8")).hexdigest()[:12]
+    base_id = "decision-" + sha1(key.encode("utf-8")).hexdigest()[:12]
+    existing_ids = {item.id for item in JsonRepository(workspace, DecisionRequest).list_all()}
+    if base_id not in existing_ids:
+        return base_id
+    suffix = 2
+    while f"{base_id}-{suffix}" in existing_ids:
+        suffix += 1
+    return f"{base_id}-{suffix}"
 
 
-def apply_decision_result(workspace: Path, decision: DecisionRequest, selected_option: str) -> list[dict[str, Any]]:
+def apply_decision_result(workspace: Path, decision: DecisionRequest, resolution: str) -> list[dict[str, Any]]:
     if decision.target_object_type != "rule_card":
         return []
     repo = JsonRepository(workspace, RuleCard)
-    target_status = "approved" if selected_option in {"confirm", "approve", "approved"} else "rejected"
-    rule = repo.update(decision.target_object_id, {"status": target_status})
+    if resolution == "confirmed":
+        target_status = "approved"
+    elif resolution == "rejected":
+        target_status = "rejected"
+    else:
+        return []
+    rule = repo.update(
+        decision.target_object_id,
+        {"status": target_status},
+        changed_by="user",
+        change_note=f"decision {decision.id} resolved as {resolution}",
+    )
     return [
         {
             "target_object_type": decision.target_object_type,
@@ -1047,12 +1189,15 @@ def apply_decision_result(workspace: Path, decision: DecisionRequest, selected_o
 
 def build_user_context_sections(
     item: BaseModel,
+    target_type: str,
     provenance: list[ProvenanceRecord],
     decisions: list[DecisionRequest],
+    provenance_diagnostics: list[str] | None = None,
 ) -> dict[str, list[str]]:
     sections: dict[str, list[str]] = {
         "【已有资料】": [],
         "【规则约束】": [],
+        "【规则状态】": [],
         "【客观数据】": [],
         "【Codex 判断】": [],
         "【Codex 生成】": [],
@@ -1062,19 +1207,33 @@ def build_user_context_sections(
     }
     data = item.to_dict()
     label = str(data.get("name") or data.get("title") or item.id)
-    sections["【已有资料】"].append(f"{label}（版本 {item.version}）")
+    if item.created_by == "user" and not any(record.artifact_nature in {"inference", "generated"} for record in provenance):
+        sections["【已有资料】"].append(f"{label}（版本 {item.version}）")
+    elif item.created_by == "codex":
+        sections["【Codex 生成】" if target_type == "content_draft" else "【Codex 判断】"].append(f"{label}（版本 {item.version}）")
+    elif item.created_by == "system":
+        sections["【客观数据】"].append(f"{label}（版本 {item.version}）")
+    else:
+        sections["【已有资料】"].append(f"{label}（版本 {item.version}）")
     if item.missing_fields:
         sections["【信息不足】"].extend(item.missing_fields)
+    if provenance_diagnostics:
+        sections["【信息不足】"].extend(provenance_diagnostics)
 
     if isinstance(item, RuleCard):
         sections["【规则约束】"].append(item.rule_summary)
         if item.status == "candidate":
             sections["【需要你决定】"].append("候选规则，需要确认后才会长期生效。")
         elif item.status in {"approved", "testing", "validated"}:
-            sections["【已由你确认】"].append(f"规则当前状态：{item.status}")
-            sections["【需要你决定】"].append("候选规则已处理；如后续效果不好，可以再拒绝或废弃。")
+            if has_user_confirmation(provenance, decisions):
+                sections["【已由你确认】"].append(f"规则当前状态：{item.status}")
+            else:
+                sections["【规则状态】"].append(f"当前状态：{item.status}")
         elif item.status in {"rejected", "deprecated"}:
-            sections["【已由你确认】"].append(f"这条规则已标记为：{item.status}")
+            if has_user_confirmation(provenance, decisions):
+                sections["【已由你确认】"].append(f"这条规则已标记为：{item.status}")
+            else:
+                sections["【规则状态】"].append(f"当前状态：{item.status}")
 
     for record in provenance:
         if record.artifact_nature == "fact":
@@ -1091,6 +1250,43 @@ def build_user_context_sections(
             sections["【已由你确认】"].append(f"{decision.question} -> {decision.selected_option}")
 
     return sections
+
+
+def has_user_confirmation(provenance: list[ProvenanceRecord], decisions: list[DecisionRequest]) -> bool:
+    if any(decision.status in {"confirmed", "rejected"} and decision.created_by == "codex" for decision in decisions):
+        return True
+    return any(
+        record.actor == "user" and record.artifact_nature == "decision" and "confirm" in record.method
+        for record in provenance
+    )
+
+
+def collect_provenance_for_object(
+    workspace: Path,
+    item: BaseModel,
+    target_type: str,
+) -> tuple[list[ProvenanceRecord], list[str]]:
+    repo = JsonRepository(workspace, ProvenanceRecord)
+    by_id = {record.id: record for record in repo.list_all()}
+    diagnostics: list[str] = []
+    selected: list[ProvenanceRecord] = []
+    if item.provenance_refs:
+        for ref in item.provenance_refs:
+            record = by_id.get(ref)
+            if record is None:
+                diagnostics.append(f"来源记录缺失：{ref}")
+                continue
+            if record.target_object_type != target_type or record.target_object_id != item.id:
+                diagnostics.append(f"来源记录目标不匹配：{ref}")
+                continue
+            selected.append(record)
+        return selected, diagnostics
+    selected = [
+        record
+        for record in by_id.values()
+        if record.target_object_type == target_type and record.target_object_id == item.id
+    ]
+    return selected, diagnostics
 
 
 def build_prompt_service(prompts_dir: str | Path) -> MockPromptService:
@@ -1110,7 +1306,8 @@ def save_rule_cards(workspace: Path, post_id: str, rule_cards: list[dict[str, An
     for index, rule_data in enumerate(rule_cards, start=1):
         data = dict(rule_data)
         data["id"] = f"rule-card-from-{post_id}-{index}"
-        saved.append(repo.upsert(RuleCard.from_dict(data)))
+        data.setdefault("created_by", "codex")
+        saved.append(repo.upsert(RuleCard.from_dict(data), changed_by="codex", change_note="generate-rule-cards"))
     return saved
 
 
@@ -1129,7 +1326,12 @@ def save_draft(workspace: Path, topic_id: str, draft_data: dict[str, Any]) -> Co
     data = dict(draft_data)
     data["id"] = f"draft-from-{topic_id}"
     data["status"] = "draft"
-    return JsonRepository(workspace, ContentDraft).upsert(ContentDraft.from_dict(data))
+    data.setdefault("created_by", "codex")
+    return JsonRepository(workspace, ContentDraft).upsert(
+        ContentDraft.from_dict(data),
+        changed_by="codex",
+        change_note="generate-draft",
+    )
 
 
 def save_publish_task(workspace: Path, draft_id: str, publish_task_data: dict[str, Any]) -> PublishTask:
@@ -1154,6 +1356,9 @@ def create_feedback_rule_cards(workspace: Path, issues: list[Any]) -> list[str]:
             continue
         rule_type = feedback_step_to_rule_type(step)
         rule_id = f"feedback-rule-{rule_type}-{len(saved_ids) + existing_count + 1}"
+        explicit_instruction = is_explicit_long_term_instruction(problem, suggestion)
+        status = "approved" if explicit_instruction else "candidate"
+        created_by: Actor = "user" if explicit_instruction else "codex"
         rule = RuleCard(
             id=rule_id,
             name=f"用户反馈规则：{rule_type}",
@@ -1165,15 +1370,40 @@ def create_feedback_rule_cards(workspace: Path, issues: list[Any]) -> list[str]:
             risks=[problem] if problem else [],
             adaptation_notes=suggestion or "后续生成时避开同类问题。",
             tags=["feedback"],
+            status=status,
             source_type="user_feedback",
             source_note=step,
             user_reason=problem,
             created_from="add-feedback",
             confidence=0.8,
+            created_by=created_by,
         )
-        repo.upsert(rule)
+        saved = repo.upsert(rule, changed_by=created_by, change_note="add-feedback")
+        if status == "candidate":
+            decision = DecisionRequest(
+                id=build_decision_id(workspace, "rule_card", saved.id, "是否确认这条反馈推导规则？"),
+                target_object_type="rule_card",
+                target_object_id=saved.id,
+                question="是否确认这条反馈推导规则？",
+                options=["confirm", "reject"],
+                option_outcomes={"confirm": "confirmed", "reject": "rejected"},
+                recommendation="confirm",
+                recommendation_reason="这条规则来自反馈推导，需要你确认后才长期生效。",
+                impact="确认后进入长期规则；拒绝后不参与后续生成。",
+                created_by="codex",
+                source_type="user_feedback",
+                source_note=step,
+                created_from="add-feedback",
+            )
+            JsonRepository(workspace, DecisionRequest).upsert(decision, changed_by="codex", change_note="add-feedback candidate decision")
         saved_ids.append(rule.id)
     return saved_ids
+
+
+def is_explicit_long_term_instruction(problem: str, suggestion: str) -> bool:
+    text = f"{problem}\n{suggestion}"
+    markers = ["以后不要", "以后都", "以后所有", "永远不要", "长期", "不要再用", "别再用"]
+    return any(marker in text for marker in markers)
 
 
 def feedback_step_to_rule_type(step: str) -> str:

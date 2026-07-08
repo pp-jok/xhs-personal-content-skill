@@ -4,6 +4,10 @@
   "target_object_id": "rule-card-001",
   "question": "是否确认这条候选规则？",
   "options": ["confirm", "reject"],
+  "option_outcomes": {
+    "confirm": "confirmed",
+    "reject": "rejected"
+  },
   "recommendation": "confirm",
   "recommendation_reason": "这条规则有可见事实和明确风险。",
   "impact": "确认后会进入后续标题生成；拒绝后不会作为长期规则。",

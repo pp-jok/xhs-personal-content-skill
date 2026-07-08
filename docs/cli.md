@@ -83,6 +83,8 @@ python3 -m app.cli.main create-decision \
   --question "是否确认这条候选规则？" \
   --option confirm \
   --option reject \
+  --option-outcome confirm=confirmed \
+  --option-outcome reject=rejected \
   --recommendation confirm \
   --recommendation-reason "证据清晰，但仍需要你确认是否适合账号。" \
   --impact "确认后进入长期规则；拒绝后不参与后续生成。"
@@ -108,6 +110,25 @@ python3 -m app.cli.main resolve-decision \
 
 第一版只对 `rule_card` 做确定性状态更新：`confirm` 会把候选规则更新为 `approved`，`reject` 会更新为 `rejected`。
 
+`--option` 是用户看到的显示文本，`--option-outcome` 是系统状态结果。中文或自定义选项必须显式映射：
+
+```bash
+python3 -m app.cli.main create-decision \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --target-type rule_card \
+  --target-id rule-card-001 \
+  --question "是否确认这条候选规则？" \
+  --option "确认使用" \
+  --option "暂不使用" \
+  --option-outcome "确认使用=confirmed" \
+  --option-outcome "暂不使用=rejected" \
+  --recommendation "确认使用" \
+  --recommendation-reason "这条规则有证据，但需要你确认。" \
+  --impact "确认后进入长期规则；拒绝后不参与后续生成。"
+```
+
+旧英文 `confirm/reject` 选项仍兼容，但新建自定义选项不要依赖显示文本推断结果。
+
 ## 查看对象版本
 
 ```bash
@@ -117,7 +138,7 @@ python3 -m app.cli.main show-object-versions \
   --record-id rule-card-001
 ```
 
-当前只为 `creator-profiles`、`rule-cards` 和 `content-drafts` 保存更新前快照。
+当前只为 `creator-profiles`、`rule-cards` 和 `content-drafts` 保存更新前快照。快照内部的 `target_object_type` 使用统一业务类型，例如 `creator_profile`、`rule_card`、`content_draft`。
 
 ## 查看用户态上下文
 

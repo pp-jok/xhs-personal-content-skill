@@ -24,6 +24,7 @@
 - `created_by`：创建者，例如 `user`、`codex`、`system`、`migration`、`external_source`。
 - `provenance_refs`：关联的来源记录 id 列表。
 - `version`：对象版本，更新时递增。
+- `schema_version`：数据结构版本，当前为 `1`。它独立于应用版本号，例如应用版本可以是 `1.3.0`，但 schema version 仍保持 `1`。
 
 原则：
 
@@ -121,7 +122,7 @@
 
 字段：`id`、`target_object_type`、`target_object_id`、`source_object_type`、`source_object_id`、`source_version`、`actor`、`artifact_nature`、`method`、`note`。
 
-基础校验：目标对象、来源对象和方法不能为空；`actor` 必须是 `user`、`codex`、`system`、`migration`、`external_source` 之一；`artifact_nature` 必须是 `fact`、`derived`、`inference`、`generated`、`recommendation`、`decision` 之一。
+基础校验：目标对象、来源对象和方法不能为空；`target_object_type` 和 `source_object_type` 使用统一业务对象类型，例如 `creator_profile`、`rule_card`、`content_draft`、`benchmark_analysis`；`actor` 必须是 `user`、`codex`、`system`、`migration`、`external_source` 之一；`artifact_nature` 必须是 `fact`、`derived`、`inference`、`generated`、`recommendation`、`decision` 之一。
 
 说明：`actor` 和 `artifact_nature` 必须分开。例如 Codex 可以产生 `inference`，但不能把它写成用户确认的事实。
 
@@ -129,11 +130,11 @@
 
 用途：记录需要用户明确确认或拒绝的事项，尤其是候选规则是否进入长期规则。
 
-字段：`id`、`target_object_type`、`target_object_id`、`question`、`options`、`recommendation`、`recommendation_reason`、`impact`、`status`、`selected_option`、`user_note`、`resulting_state_changes`、`resolved_at`。
+字段：`id`、`target_object_type`、`target_object_id`、`question`、`options`、`option_outcomes`、`recommendation`、`recommendation_reason`、`impact`、`status`、`selected_option`、`user_note`、`resulting_state_changes`、`resolved_at`。
 
-基础校验：问题、选项、推荐理由和影响不能为空；选项至少 2 个；推荐和用户选择必须来自选项；状态必须是 `pending`、`confirmed`、`rejected`、`cancelled`、`superseded` 之一。
+基础校验：问题、选项、推荐理由和影响不能为空；选项至少 2 个；推荐和用户选择必须来自选项；`option_outcomes` 必须显式把每个显示选项映射到 `confirmed`、`rejected`、`cancelled` 或 `superseded`；状态必须是 `pending`、`confirmed`、`rejected`、`cancelled`、`superseded` 之一。
 
-说明：候选规则不能因为存在于文件中就视为已确认。只有用户确认后的状态变化才可写入 `resulting_state_changes`。
+说明：候选规则不能因为存在于文件中就视为已确认。只有用户确认后的状态变化才可写入 `resulting_state_changes`。`pending` 不能带 `selected_option`、`resolved_at` 或状态变化；结束态不能再次解析。
 
 ## ObjectVersion
 
@@ -143,7 +144,7 @@
 
 基础校验：目标对象、版本号和快照不能为空；`snapshot` 必须是对象。
 
-说明：第一版只为 `CreatorProfile`、`RuleCard` 和 `ContentDraft` 保存更新前快照，不做完整恢复界面。
+说明：第一版只为 `CreatorProfile`、`RuleCard` 和 `ContentDraft` 保存更新前快照，不做完整恢复界面。`changed_by` 和 `change_note` 应记录真实修改来源，例如用户更新账号档案为 `user`，Codex 生成草稿为 `codex`。
 
 ## TopicItem
 

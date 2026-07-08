@@ -391,6 +391,8 @@ Action:
 6. When a candidate rule comes from captured-post analysis, use `create-rule-from-analysis` to create both the rule card and evidence.
 7. Use lifecycle commands for explicit user decisions: `approve-rule`, `mark-rule-testing`, `record-rule-result`, `reject-rule`, or `deprecate-rule`.
 8. For candidate rules that need an explicit choice, create a `DecisionRequest` with `create-decision`; use `resolve-decision` when the user confirms or rejects it.
+   - If options are Chinese or custom labels, pass explicit `--option-outcome` mappings such as `确认使用=confirmed` and `暂不使用=rejected`.
+   - Do not infer the decision result from display text.
 9. Use `check-rule-relations` before claiming that rules conflict; repeated summaries with different applicable scenarios are not automatically conflicts.
 10. Prefer updating existing rules over creating duplicates.
 11. Reply with: what rule changed, what evidence supports it, current status, and how it will affect future output.

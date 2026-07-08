@@ -16,6 +16,7 @@ from app.models.core import (  # noqa: E402
     CaptureRecord,
     ContentInboxItem,
     CreatorProfile,
+    CURRENT_SCHEMA_VERSION,
     CustomTag,
     MODEL_TYPES,
     DecisionRequest,
@@ -116,7 +117,8 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(data["missing_fields"], ["forbidden_expressions"])
         self.assertEqual(data["confidence"], 0.6)
         self.assertEqual(data["source_type"], "user_input")
-        self.assertEqual(data["schema_version"], "1.3.0")
+        self.assertEqual(data["schema_version"], CURRENT_SCHEMA_VERSION)
+        self.assertNotEqual(data["schema_version"], (PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip())
         self.assertEqual(data["version"], 1)
         self.assertEqual(data["provenance_refs"], [])
         self.assertEqual(data["created_by"], "user")
@@ -170,14 +172,16 @@ class ModelTests(unittest.TestCase):
             target_object_type="rule_card",
             target_object_id="rule-001",
             question="是否确认这条规则？",
-            options=["confirm", "reject"],
-            recommendation="confirm",
+            options=["确认使用", "暂不使用"],
+            option_outcomes={"确认使用": "confirmed", "暂不使用": "rejected"},
+            recommendation="确认使用",
             recommendation_reason="证据清晰。",
             impact="确认后用于后续标题生成。",
         )
 
         self.assertEqual(decision.status, "pending")
-        self.assertEqual(decision.options, ["confirm", "reject"])
+        self.assertEqual(decision.options, ["确认使用", "暂不使用"])
+        self.assertEqual(decision.option_outcomes["确认使用"], "confirmed")
 
         with self.assertRaises(ValidationError):
             DecisionRequest(
@@ -185,13 +189,60 @@ class ModelTests(unittest.TestCase):
                 target_object_type="rule_card",
                 target_object_id="rule-001",
                 question="是否确认？",
-                options=["confirm"],
+                options=["确认使用", "暂不使用"],
+                option_outcomes={"确认使用": "confirmed", "暂不使用": "rejected"},
                 recommendation="confirm",
                 recommendation_reason="证据清晰。",
                 impact="确认后生效。",
                 status="confirmed",
                 selected_option="other",
             )
+
+    def test_decision_request_enforces_status_invariants(self) -> None:
+        valid_resolved = DecisionRequest(
+            id="decision-confirmed",
+            target_object_type="rule_card",
+            target_object_id="rule-001",
+            question="是否确认？",
+            options=["确认使用", "暂不使用"],
+            option_outcomes={"确认使用": "confirmed", "暂不使用": "rejected"},
+            recommendation="确认使用",
+            recommendation_reason="证据清晰。",
+            impact="确认后生效。",
+            status="confirmed",
+            selected_option="确认使用",
+            resolved_at="2026-07-08T00:00:00Z",
+            resulting_state_changes=[{"field": "status", "value": "approved"}],
+        )
+        self.assertEqual(valid_resolved.status, "confirmed")
+
+        invalid_cases = [
+            {"status": "confirmed", "selected_option": "", "resolved_at": None},
+            {"status": "pending", "selected_option": "确认使用", "resolved_at": "2026-07-08T00:00:00Z"},
+            {
+                "status": "pending",
+                "selected_option": "",
+                "resolved_at": None,
+                "resulting_state_changes": [{"field": "status"}],
+            },
+            {"status": "rejected", "selected_option": "确认使用", "resolved_at": "2026-07-08T00:00:00Z"},
+            {"status": "cancelled", "selected_option": "", "resolved_at": None},
+            {"status": "superseded", "selected_option": "", "resolved_at": None},
+        ]
+        for case in invalid_cases:
+            with self.subTest(case=case), self.assertRaises(ValidationError):
+                DecisionRequest(
+                    id="decision-bad",
+                    target_object_type="rule_card",
+                    target_object_id="rule-001",
+                    question="是否确认？",
+                    options=["确认使用", "暂不使用"],
+                    option_outcomes={"确认使用": "confirmed", "暂不使用": "rejected"},
+                    recommendation="确认使用",
+                    recommendation_reason="证据清晰。",
+                    impact="确认后生效。",
+                    **case,
+                )
 
     def test_repository_update_preserves_previous_version_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -215,10 +266,120 @@ class ModelTests(unittest.TestCase):
 
             self.assertEqual(updated.version, 2)
             self.assertEqual(len(versions), 1)
-            self.assertEqual(versions[0].target_object_type, "rule-cards")
+            self.assertEqual(versions[0].target_object_type, "rule_card")
             self.assertEqual(versions[0].target_object_id, "rule-versioned")
             self.assertEqual(versions[0].object_version, 1)
             self.assertEqual(versions[0].snapshot["status"], "candidate")
+
+    def test_repository_upsert_preserves_versions_for_versioned_models(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = JsonRepository(temp_dir, CreatorProfile)
+            first = CreatorProfile(
+                id="creator-versioned",
+                name="账号",
+                positioning="职场表达",
+                target_audience=["职场新人"],
+                content_style=["真实"],
+                goals=["提升收藏"],
+                content_formats=["图文"],
+                publish_frequency="每周 3 篇",
+                notes="第一版。",
+            )
+            saved_first = repo.upsert(first, changed_by="user", change_note="首次录入账号档案")
+            second = CreatorProfile(
+                id="creator-versioned",
+                name="账号",
+                positioning="职场表达更新",
+                target_audience=["职场新人"],
+                content_style=["真实"],
+                goals=["提升收藏"],
+                content_formats=["图文"],
+                publish_frequency="每周 3 篇",
+                notes="第二版。",
+            )
+            saved_second = repo.upsert(second, changed_by="user", change_note="用户更新账号定位")
+            versions = JsonRepository(temp_dir, ObjectVersion).list_all()
+
+            self.assertEqual(saved_first.version, 1)
+            self.assertEqual(saved_second.version, 2)
+            self.assertEqual(saved_second.created_at, saved_first.created_at)
+            self.assertNotEqual(saved_second.updated_at, saved_first.updated_at)
+            self.assertEqual(len(versions), 1)
+            self.assertEqual(versions[0].changed_by, "user")
+            self.assertEqual(versions[0].change_note, "用户更新账号定位")
+            self.assertEqual(versions[0].snapshot["positioning"], "职场表达")
+
+    def test_repository_upsert_versions_rule_and_draft_but_not_non_versioned_models(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rule_repo = JsonRepository(temp_dir, RuleCard)
+            draft_repo = JsonRepository(temp_dir, ContentDraft)
+            tag_repo = JsonRepository(temp_dir, CustomTag)
+            rule_repo.upsert(
+                RuleCard(
+                    id="rule-upsert",
+                    name="规则",
+                    type="title",
+                    source_ids=["analysis-001"],
+                    applicable_scenarios=["标题"],
+                    rule_summary="第一版规则。",
+                    examples=["例子"],
+                    risks=["风险"],
+                    adaptation_notes="适合账号。",
+                    status="candidate",
+                ),
+                changed_by="codex",
+                change_note="Codex 创建候选规则",
+            )
+            rule = rule_repo.upsert(
+                RuleCard(
+                    id="rule-upsert",
+                    name="规则",
+                    type="title",
+                    source_ids=["analysis-001"],
+                    applicable_scenarios=["标题"],
+                    rule_summary="第二版规则。",
+                    examples=["例子"],
+                    risks=["风险"],
+                    adaptation_notes="适合账号。",
+                    status="candidate",
+                ),
+                changed_by="codex",
+                change_note="Codex 更新候选规则",
+            )
+            draft_repo.upsert(
+                ContentDraft(
+                    id="draft-upsert",
+                    topic_id="topic-001",
+                    titles=["标题 A"],
+                    cover_titles=["封面 A"],
+                    script="第一版脚本",
+                    shot_suggestions=["镜头 A"],
+                    created_by="codex",
+                ),
+                changed_by="codex",
+                change_note="生成初稿",
+            )
+            draft = draft_repo.upsert(
+                ContentDraft(
+                    id="draft-upsert",
+                    topic_id="topic-001",
+                    titles=["标题 B"],
+                    cover_titles=["封面 B"],
+                    script="第二版脚本",
+                    shot_suggestions=["镜头 B"],
+                    created_by="codex",
+                ),
+                changed_by="codex",
+                change_note="重写草稿",
+            )
+            tag_repo.upsert(CustomTag(id="tag-upsert", name="标签", description="第一版", scope=["rule_card"]))
+            tag_repo.upsert(CustomTag(id="tag-upsert", name="标签", description="第二版", scope=["rule_card"]))
+            versions = JsonRepository(temp_dir, ObjectVersion).list_all()
+
+            self.assertEqual(rule.version, 2)
+            self.assertEqual(draft.version, 2)
+            self.assertEqual(len(versions), 2)
+            self.assertFalse(any(item.target_object_type == "custom_tag" for item in versions))
 
     def test_content_quality_review_rejects_score_out_of_range(self) -> None:
         with self.assertRaises(ValidationError):

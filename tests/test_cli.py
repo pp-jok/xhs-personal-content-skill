@@ -275,6 +275,75 @@ class CliTests(unittest.TestCase):
             self.assertEqual(output["result"]["records"][0]["artifact_nature"], "inference")
             self.assertNotEqual(output["result"]["records"][0]["artifact_nature"], "fact")
 
+    def test_import_provenance_validates_target_and_source_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            source_file = workspace / "provenance.json"
+            source_file.write_text(
+                json.dumps(
+                    {
+                        "id": "prov-import",
+                        "target_object_type": "rule_card",
+                        "target_object_id": "missing-rule",
+                        "source_object_type": "benchmark_analysis",
+                        "source_object_id": "missing-analysis",
+                        "actor": "codex",
+                        "artifact_nature": "inference",
+                        "method": "test",
+                        "note": "bad ref",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            failed = self._run_cli(
+                ["--data-dir", temp_dir, "import-json", "provenance-records", str(source_file)],
+                expected_code=1,
+            )
+            JsonRepository(workspace, RuleCard).upsert(
+                RuleCard(
+                    id="rule-provenance-target",
+                    name="规则",
+                    type="title",
+                    source_ids=["analysis-001"],
+                    applicable_scenarios=["标题"],
+                    rule_summary="规则。",
+                    examples=["例子"],
+                    risks=["风险"],
+                    adaptation_notes="适合账号。",
+                    status="candidate",
+                )
+            )
+            JsonRepository(workspace, BenchmarkAnalysis).upsert(
+                BenchmarkAnalysis(
+                    id="analysis-provenance-source",
+                    capture_id="capture-001",
+                    observable_facts={"title": "标题"},
+                )
+            )
+            source_file.write_text(
+                json.dumps(
+                    {
+                        "id": "prov-import",
+                        "target_object_type": "rule_card",
+                        "target_object_id": "rule-provenance-target",
+                        "source_object_type": "benchmark_analysis",
+                        "source_object_id": "analysis-provenance-source",
+                        "actor": "codex",
+                        "artifact_nature": "inference",
+                        "method": "test",
+                        "note": "valid ref",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            imported = self._run_cli(["--data-dir", temp_dir, "import-json", "provenance-records", str(source_file)])
+
+            self.assertFalse(failed["ok"])
+            self.assertIn("not found", failed["error"])
+            self.assertTrue(imported["ok"])
+
     def test_decision_cli_confirm_and_reject_update_candidate_rules(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
@@ -393,6 +462,182 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(rejected_rule.status, "rejected")
 
+    def test_decision_cli_uses_explicit_outcome_mapping_for_chinese_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            JsonRepository(workspace, RuleCard).upsert(
+                RuleCard(
+                    id="rule-chinese-decision",
+                    name="候选规则",
+                    type="title",
+                    source_ids=["analysis-001"],
+                    applicable_scenarios=["标题"],
+                    rule_summary="标题更口语。",
+                    examples=["我试过..."],
+                    risks=["不能编造经历"],
+                    adaptation_notes="确认后使用。",
+                    status="candidate",
+                )
+            )
+            created = self._run_cli(
+                [
+                    "create-decision",
+                    "--workspace",
+                    temp_dir,
+                    "--target-type",
+                    "rule_card",
+                    "--target-id",
+                    "rule-chinese-decision",
+                    "--question",
+                    "是否确认？",
+                    "--option",
+                    "确认使用",
+                    "--option",
+                    "暂不使用",
+                    "--option-outcome",
+                    "确认使用=confirmed",
+                    "--option-outcome",
+                    "暂不使用=rejected",
+                    "--recommendation",
+                    "确认使用",
+                    "--recommendation-reason",
+                    "证据清晰。",
+                    "--impact",
+                    "确认后进入长期规则。",
+                ]
+            )
+            resolved = self._run_cli(
+                [
+                    "resolve-decision",
+                    "--workspace",
+                    temp_dir,
+                    "--decision-id",
+                    created["result"]["decision_id"],
+                    "--selected-option",
+                    "确认使用",
+                    "--user-note",
+                    "确认使用。",
+                ]
+            )
+            rule = JsonRepository(workspace, RuleCard).read("rule-chinese-decision")
+
+            self.assertEqual(resolved["result"]["status"], "confirmed")
+            self.assertEqual(rule.status, "approved")
+
+    def test_decision_cli_rejects_repeated_resolve_and_preserves_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            JsonRepository(workspace, RuleCard).upsert(
+                RuleCard(
+                    id="rule-once",
+                    name="候选规则",
+                    type="title",
+                    source_ids=["analysis-001"],
+                    applicable_scenarios=["标题"],
+                    rule_summary="规则。",
+                    examples=["例子"],
+                    risks=["风险"],
+                    adaptation_notes="确认后使用。",
+                    status="candidate",
+                )
+            )
+            created = self._create_rule_decision(temp_dir, "rule-once", question="是否确认一次？")
+            self._run_cli(
+                [
+                    "resolve-decision",
+                    "--workspace",
+                    temp_dir,
+                    "--decision-id",
+                    created["result"]["decision_id"],
+                    "--selected-option",
+                    "confirm",
+                ]
+            )
+            repeated = self._run_cli(
+                [
+                    "resolve-decision",
+                    "--workspace",
+                    temp_dir,
+                    "--decision-id",
+                    created["result"]["decision_id"],
+                    "--selected-option",
+                    "reject",
+                ],
+                expected_code=1,
+            )
+
+            self.assertFalse(repeated["ok"])
+            self.assertIn("Only pending decisions can be resolved", repeated["error"])
+            self.assertEqual(JsonRepository(workspace, RuleCard).read("rule-once").status, "approved")
+
+    def test_decision_cli_does_not_overwrite_resolved_decisions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            JsonRepository(workspace, RuleCard).upsert(
+                RuleCard(
+                    id="rule-repeat",
+                    name="候选规则",
+                    type="title",
+                    source_ids=["analysis-001"],
+                    applicable_scenarios=["标题"],
+                    rule_summary="规则。",
+                    examples=["例子"],
+                    risks=["风险"],
+                    adaptation_notes="确认后使用。",
+                    status="candidate",
+                )
+            )
+            first = self._create_rule_decision(temp_dir, "rule-repeat", question="是否确认重复？")
+            duplicate_pending = self._create_rule_decision(temp_dir, "rule-repeat", question="是否确认重复？")
+            self._run_cli(
+                [
+                    "resolve-decision",
+                    "--workspace",
+                    temp_dir,
+                    "--decision-id",
+                    first["result"]["decision_id"],
+                    "--selected-option",
+                    "confirm",
+                ]
+            )
+            second = self._create_rule_decision(temp_dir, "rule-repeat", question="是否确认重复？")
+            decisions = JsonRepository(workspace, DecisionRequest).list_all()
+
+            self.assertEqual(first["result"]["decision_id"], duplicate_pending["result"]["decision_id"])
+            self.assertNotEqual(first["result"]["decision_id"], second["result"]["decision_id"])
+            self.assertEqual(sorted(item.status for item in decisions), ["confirmed", "pending"])
+
+    def test_decision_cli_validates_target_type_and_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            invalid_type = self._run_cli(
+                [
+                    "create-decision",
+                    "--workspace",
+                    temp_dir,
+                    "--target-type",
+                    "rule-cards",
+                    "--target-id",
+                    "missing",
+                    "--question",
+                    "是否确认？",
+                    "--option",
+                    "confirm",
+                    "--option",
+                    "reject",
+                    "--recommendation",
+                    "confirm",
+                    "--recommendation-reason",
+                    "原因。",
+                    "--impact",
+                    "影响。",
+                ],
+                expected_code=1,
+            )
+            missing_target = self._create_rule_decision(temp_dir, "missing-rule", expected_code=1)
+
+            self.assertIn("Unsupported target object type", invalid_type["error"])
+            self.assertIn("not found", missing_target["error"])
+
     def test_version_and_user_context_cli_expose_plain_language_sections(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
@@ -457,7 +702,106 @@ class CliTests(unittest.TestCase):
             self.assertIn("【Codex 判断】", sections)
             self.assertIn("【需要你决定】", sections)
             self.assertIn("【已由你确认】", sections)
-            self.assertIn("候选规则", "\n".join(sections["【需要你决定】"]))
+            self.assertEqual(sections["【需要你决定】"], [])
+            self.assertIn("当前状态：approved", "\n".join(sections["【规则状态】"]))
+
+    def test_user_context_uses_type_and_confirmation_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            JsonRepository(workspace, RuleCard).upsert(
+                RuleCard(
+                    id="shared-id",
+                    name="旧规则",
+                    type="title",
+                    source_ids=["legacy"],
+                    applicable_scenarios=["标题"],
+                    rule_summary="旧规则已 approved，但没有用户确认。",
+                    examples=["例子"],
+                    risks=["风险"],
+                    adaptation_notes="旧数据。",
+                    status="approved",
+                )
+            )
+            JsonRepository(workspace, ContentDraft).upsert(
+                ContentDraft(
+                    id="shared-id",
+                    topic_id="topic-001",
+                    titles=["标题"],
+                    cover_titles=["封面"],
+                    script="草稿正文",
+                    shot_suggestions=["镜头"],
+                    created_by="codex",
+                )
+            )
+            JsonRepository(workspace, ProvenanceRecord).upsert(
+                ProvenanceRecord(
+                    id="prov-rule",
+                    target_object_type="rule_card",
+                    target_object_id="shared-id",
+                    source_object_type="benchmark_analysis",
+                    source_object_id="analysis-001",
+                    actor="codex",
+                    artifact_nature="inference",
+                    method="test",
+                    note="规则推断。",
+                )
+            )
+            JsonRepository(workspace, ProvenanceRecord).upsert(
+                ProvenanceRecord(
+                    id="prov-draft",
+                    target_object_type="content_draft",
+                    target_object_id="shared-id",
+                    source_object_type="topic_item",
+                    source_object_id="topic-001",
+                    actor="codex",
+                    artifact_nature="generated",
+                    method="test",
+                    note="草稿生成。",
+                )
+            )
+
+            rule_context = self._run_cli(
+                ["show-user-context", "--workspace", temp_dir, "--collection", "rule-cards", "--record-id", "shared-id"]
+            )
+            draft_context = self._run_cli(
+                ["show-user-context", "--workspace", temp_dir, "--collection", "content-drafts", "--record-id", "shared-id"]
+            )
+            rule_sections = rule_context["result"]["sections"]
+            draft_sections = draft_context["result"]["sections"]
+
+            self.assertNotIn("规则当前状态：approved", rule_sections["【已由你确认】"])
+            self.assertIn("当前状态：approved", "\n".join(rule_sections["【规则状态】"]))
+            self.assertIn("规则推断。", "\n".join(rule_sections["【Codex 判断】"]))
+            self.assertNotIn("草稿生成。", "\n".join(rule_sections["【Codex 生成】"]))
+            self.assertIn("草稿生成。", "\n".join(draft_sections["【Codex 生成】"]))
+
+    def test_add_feedback_creates_candidate_for_inferred_feedback_and_approved_for_explicit_instruction(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            feedback_file = Path(temp_dir) / "feedback.json"
+            feedback_file.write_text(
+                json.dumps(
+                    {
+                        "issues": [
+                            {"step": "title", "problem": "这个标题太 AI", "suggestion": "更像真人经验"},
+                            {"step": "title", "problem": "以后不要再用夸张承诺", "suggestion": ""},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            output = self._run_cli(["add-feedback", "--workspace", temp_dir, "--file", str(feedback_file)])
+            rules = {item.id: item for item in JsonRepository(Path(temp_dir), RuleCard).list_all()}
+            decisions = JsonRepository(Path(temp_dir), DecisionRequest).list_all()
+
+            self.assertTrue(output["ok"])
+            self.assertEqual(rules["feedback-rule-title-1"].status, "candidate")
+            self.assertEqual(rules["feedback-rule-title-1"].created_by, "codex")
+            self.assertEqual(rules["feedback-rule-title-2"].status, "approved")
+            self.assertEqual(rules["feedback-rule-title-2"].created_by, "user")
+            self.assertEqual(len(decisions), 1)
+            self.assertEqual(decisions[0].target_object_id, "feedback-rule-title-1")
 
     def test_add_custom_tags_merges_root_list_and_collection_records(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -875,6 +1219,7 @@ class CliTests(unittest.TestCase):
             rule = JsonRepository(data_dir, RuleCard).read(output["result"]["rule_id"])
             evidence = JsonRepository(data_dir, RuleEvidence).read(output["result"]["evidence_id"])
             self.assertEqual(rule.status, "candidate")
+            self.assertEqual(rule.created_by, "codex")
             self.assertEqual(rule.strength, "weak")
             self.assertEqual(evidence.rule_id, rule.id)
             self.assertEqual(evidence.source_type, "benchmark_analysis")
@@ -1041,6 +1386,38 @@ class CliTests(unittest.TestCase):
             code = main(args)
         self.assertEqual(code, expected_code)
         return json.loads(buffer.getvalue())
+
+    def _create_rule_decision(
+        self,
+        workspace: str,
+        rule_id: str,
+        question: str = "是否确认？",
+        expected_code: int = 0,
+    ) -> dict:
+        return self._run_cli(
+            [
+                "create-decision",
+                "--workspace",
+                workspace,
+                "--target-type",
+                "rule_card",
+                "--target-id",
+                rule_id,
+                "--question",
+                question,
+                "--option",
+                "confirm",
+                "--option",
+                "reject",
+                "--recommendation",
+                "confirm",
+                "--recommendation-reason",
+                "证据清晰。",
+                "--impact",
+                "确认后进入长期规则。",
+            ],
+            expected_code=expected_code,
+        )
 
     def _seed_data(self, data_dir: Path) -> None:
         JsonRepository(data_dir, CreatorProfile).create(
