@@ -42,6 +42,7 @@ def build_rule_and_evidence_from_analysis(
         source_note=analysis.id,
         created_from="create-rule-from-analysis",
         confidence=analysis.confidence,
+        created_by="codex",
     )
     evidence = RuleEvidence(
         id=evidence_id,

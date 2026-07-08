@@ -12,6 +12,8 @@ Phase 12 增加用户授权 Chrome 单链接采集。无 `--manual-file` 时，`
 
 Phase 11 增加质量评价和质量周报。它用于记录人工判断、修改成本和规则命中情况，不用生成数量冒充质量提升。
 
+MVP PR-1 增加最小来源追踪、用户决策和对象版本快照。候选规则等事项可以先进入待确认状态，用户确认后再影响长期规则。
+
 CLI 只读写本地 JSON 文件，不调用真实模型 API，不自动发布。
 
 CLI 不替代 Codex 做高质量生成。`run-workflow` 和 `validate-real-sample` 中的生成链路仍主要用于本地流程验证。
@@ -52,6 +54,114 @@ python3 -m app.cli.main list creator-profiles
 ```bash
 python3 -m app.cli.main show creator-profiles creator-main
 ```
+
+## 查看来源追踪
+
+```bash
+python3 -m app.cli.main show-provenance \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --target-type rule_card \
+  --target-id rule-card-001
+```
+
+来源记录会区分：
+
+- `actor`：谁产生，例如 `user`、`codex`、`system`。
+- `artifact_nature`：内容性质，例如 `fact`、`inference`、`generated`、`decision`。
+
+不要把 `codex + inference` 当作 `user + fact`。
+
+## 创建和处理用户决策
+
+创建待决策事项：
+
+```bash
+python3 -m app.cli.main create-decision \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --target-type rule_card \
+  --target-id rule-card-001 \
+  --question "是否确认这条候选规则？" \
+  --option confirm \
+  --option reject \
+  --option-outcome confirm=confirmed \
+  --option-outcome reject=rejected \
+  --recommendation confirm \
+  --recommendation-reason "证据清晰，但仍需要你确认是否适合账号。" \
+  --impact "确认后进入长期规则；拒绝后不参与后续生成。"
+```
+
+查看待决策事项：
+
+```bash
+python3 -m app.cli.main list-decisions \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --status pending
+```
+
+确认或拒绝：
+
+```bash
+python3 -m app.cli.main resolve-decision \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --decision-id decision-xxxx \
+  --selected-option confirm \
+  --user-note "这条适合我的账号"
+```
+
+第一版只对 `rule_card` 做确定性状态更新：`confirm` 会把候选规则更新为 `approved`，`reject` 会更新为 `rejected`。
+
+`--option` 是用户看到的显示文本，`--option-outcome` 是系统状态结果。中文或自定义选项必须显式映射：
+
+```bash
+python3 -m app.cli.main create-decision \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --target-type rule_card \
+  --target-id rule-card-001 \
+  --question "是否确认这条候选规则？" \
+  --option "确认使用" \
+  --option "暂不使用" \
+  --option-outcome "确认使用=confirmed" \
+  --option-outcome "暂不使用=rejected" \
+  --recommendation "确认使用" \
+  --recommendation-reason "这条规则有证据，但需要你确认。" \
+  --impact "确认后进入长期规则；拒绝后不参与后续生成。"
+```
+
+旧英文 `confirm/reject` 选项仍兼容，但新建自定义选项不要依赖显示文本推断结果。
+
+## 查看对象版本
+
+```bash
+python3 -m app.cli.main show-object-versions \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --collection rule-cards \
+  --record-id rule-card-001
+```
+
+当前只为 `creator-profiles`、`rule-cards` 和 `content-drafts` 保存更新前快照。快照内部的 `target_object_type` 使用统一业务类型，例如 `creator_profile`、`rule_card`、`content_draft`。
+`show-object-versions` 只接受这三个版本化集合；其他集合不会在运行时进入无意义查询。
+
+## 查看用户态上下文
+
+```bash
+python3 -m app.cli.main show-user-context \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --collection rule-cards \
+  --record-id rule-card-001
+```
+
+输出按用户可理解区块组织，例如：
+
+- `【已有资料】`
+- `【规则约束】`
+- `【客观数据】`
+- `【Codex 判断】`
+- `【Codex 生成】`
+- `【需要你决定】`
+- `【已由你决定】`
+- `【信息不足】`
+
+`【已由你决定】` 只在存在 `resolved_by=user` 的已解决决策，或明确的 user decision provenance 时展示。`created_by=codex` 只表示决策请求由 Codex 创建，不能作为用户确认依据。
 
 ## 初始化账号工作区
 
@@ -112,7 +222,32 @@ python3 -m app.cli.main add-feedback \
   --file /path/to/validation_feedback.json
 ```
 
-该命令会把新的 `issues` 追加到现有反馈中，适合记录“标题太 AI”“封面可以”“以后不要这样写”等用户偏好。
+该命令会把新的 `issues` 追加到现有反馈中，适合记录“标题太 AI”“封面可以”等用户偏好。
+
+反馈是否能直接沉淀为长期规则，必须由结构化字段决定：
+
+- `feedback_nature=explicit_user_rule` 且 `user_confirmed=true`：保存为用户已决定的长期规则。
+- `feedback_nature=inferred_preference` 或 `candidate_rule`：保存为候选规则，并创建待用户决定事项。
+- `feedback_nature=content_specific_feedback`：只作为当前内容反馈，不自动提升为长期规则。
+- `feedback_nature=uncertain` 或缺失：采用安全默认，不自动 approved。
+
+显式用户长期规则会额外保存一条 user decision provenance，便于审计这条规则为什么可以直接进入 `approved`。
+
+## 生成规则使用范围
+
+正式生成默认只使用 active rules：
+
+- `approved`
+- `testing`
+- `validated`
+
+以下规则不会进入 `generate-topics`、`generate-draft` 或 `review-own-post` 的 prompt 上下文：
+
+- `candidate`
+- `rejected`
+- `deprecated`
+
+当前 CLI 暂未提供试用 candidate 的显式参数。需要试用候选规则时，应先让用户通过决策确认，或在后续实验模式中单独实现。
 
 ## 校验工作区
 

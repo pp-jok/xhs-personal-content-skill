@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.3.0 - 2026-07-07
+
+MVP PR-1：最小来源追踪、用户决策与版本能力。
+
+### Added
+
+- 新增 `ProvenanceRecord`，用于记录目标对象、来源对象、来源版本、产生者、内容性质和方法版本。
+- 新增 `DecisionRequest`，用于记录候选规则等事项的待确认、确认和拒绝。
+- 新增 `ObjectVersion`，用于保存 `CreatorProfile`、`RuleCard` 和 `ContentDraft` 更新前快照。
+- `BaseModel` 新增 `schema_version`、`version`、`created_by` 和 `provenance_refs`，旧数据读取时使用默认值兼容。
+- 新增 CLI：`show-provenance`、`create-decision`、`list-decisions`、`resolve-decision`、`show-object-versions`、`show-user-context`。
+- 决策选项新增 `option_outcomes`，显示文本与系统结果分离，支持中文和自定义选项。
+
+### Changed
+
+- `JsonRepository.update` 会为账号档案、规则卡片和内容草稿保留上一版本快照，并递增对象版本。
+- `JsonRepository.upsert` 对版本化对象也会保留上一版本快照，并记录 `changed_by` 与 `change_note`。
+- 用户态输出约束补充来源区块：已有资料、规则约束、客观数据、Codex 判断、Codex 生成、需要用户决定、已由用户决定和信息不足。
+- `schema_version` 与应用版本解耦，当前数据 schema version 为 `1`。
+- 删除基于关键词判断长期规则的逻辑；反馈是否为长期规则改由 `feedback_nature` 和 `user_confirmed` 等结构化输入决定。
+- `RuleCard` 缺少 `status` 时安全默认为 `candidate`；Codex 生成规则即使声明 `approved`，没有用户确认依据也会降级为候选规则。
+- `DecisionRequest` 新增 `resolved_by`，用户态上下文只把 `resolved_by=user` 或明确 user decision provenance 视为用户决定。
+- `show-object-versions` 限制为 `creator-profiles`、`rule-cards` 和 `content-drafts`。
+- provenance 正式保存入口增加 target/source/source_version 完整性校验。
+- 新增 active rule selection：正式生成默认只使用 `approved`、`testing`、`validated`，排除 `candidate`、`rejected`、`deprecated`。
+- `BenchmarkToPublishWorkflow` 不再把同轮提取的新 candidate 规则直接用于选题或草稿生成。
+- 用户态上下文会检测 RuleCard 当前状态与用户历史决策是否冲突，冲突时进入信息不足，不冒充用户已决定。
+- 结构化 `explicit_user_rule + user_confirmed=true` 会保存 user decision provenance，便于审计确认来源。
+
+### Boundaries
+
+- 不做完整目录迁移、索引系统或关系图。
+- 不把候选规则自动当作已确认规则。
+- 不把 Codex inference 写成 user fact。
+
 ## 1.2.0 - 2026-07-05
 
 Phase 12：用户授权 Chrome 单链接采集。

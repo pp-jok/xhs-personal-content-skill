@@ -32,6 +32,20 @@ Every normal response should follow this shape when applicable:
 
 Use concise Chinese by default. Avoid engineering vocabulary unless the user explicitly asks for it.
 
+When a response mixes saved account memory, observed post facts, Codex judgment, generated text, or pending choices, group them with plain user-facing labels:
+
+- `【已有资料】`
+- `【规则约束】`
+- `【客观数据】`
+- `【Codex 判断】`
+- `【Codex 生成】`
+- `【需要你决定】`
+- `【已由你决定】`
+- `【信息不足】`
+
+Do not label every sentence. Use only the sections that help the user decide. Candidate rules must stay under `【需要你决定】` until the user confirms them.
+Treat `created_by`, `resolved_by`, `changed_by`, and provenance `actor` as separate evidence. A rule is only “decided by the user” when a resolved decision has `resolved_by=user` or explicit user decision provenance.
+
 Good default phrases:
 
 - “我已把这部分加入你的账号资料。”
@@ -125,6 +139,15 @@ Use this normal reply shape:
 
 ### Preference Tuning
 
+When recording feedback, do not infer long-term rules from words such as “长期” or “以后不要”. Use structured feedback nature instead:
+
+- `explicit_user_rule` with `user_confirmed=true`: save as a user-approved long-term rule and keep decision evidence.
+- `inferred_preference` or `candidate_rule`: save as a Codex candidate and ask the user to decide.
+- `content_specific_feedback`: keep it local to the current content; do not promote it to an approved long-term rule.
+- `uncertain` or missing nature: use the safe default and do not approve automatically.
+
+When `explicit_user_rule` is saved directly as approved, keep auditable user decision provenance. The evidence must show that approval came from structured user confirmation, not keyword matching or Codex inference.
+
 When the user says something is good or bad, turn it into an enduring preference:
 
 ```text
@@ -141,6 +164,8 @@ Prefer updating existing rules over creating duplicates. Always preserve the use
 When generating topics, drafts, or tasks, ground the output in accumulated account context:
 
 - Mention which account preference or rule influenced the result.
+- Use only active rules by default: `approved`, `testing`, and `validated`.
+- Do not use `candidate`, `rejected`, or `deprecated` rules in formal generation. Candidate rules stay under `【需要你决定】` until confirmed.
 - Avoid generic content advice.
 - If context is insufficient, say what kind of sample would improve the next round.
 - Do not describe the output as coming from mock or internal services in normal conversation.
@@ -362,7 +387,7 @@ Trigger examples:
 
 - “这个标题太 AI”
 - “这个封面可以”
-- “以后不要这样写”
+- “这篇先不要这样写”
 - “这个规则适合我”
 - “确认这条规则”
 - “这条规则验证成功”
@@ -377,9 +402,12 @@ Action:
 5. Use `add-feedback` for structured feedback capture.
 6. When a candidate rule comes from captured-post analysis, use `create-rule-from-analysis` to create both the rule card and evidence.
 7. Use lifecycle commands for explicit user decisions: `approve-rule`, `mark-rule-testing`, `record-rule-result`, `reject-rule`, or `deprecate-rule`.
-8. Use `check-rule-relations` before claiming that rules conflict; repeated summaries with different applicable scenarios are not automatically conflicts.
-9. Prefer updating existing rules over creating duplicates.
-10. Reply with: what rule changed, what evidence supports it, current status, and how it will affect future output.
+8. For candidate rules that need an explicit choice, create a `DecisionRequest` with `create-decision`; use `resolve-decision` when the user confirms or rejects it.
+   - If options are Chinese or custom labels, pass explicit `--option-outcome` mappings such as `确认使用=confirmed` and `暂不使用=rejected`.
+   - Do not infer the decision result from display text.
+9. Use `check-rule-relations` before claiming that rules conflict; repeated summaries with different applicable scenarios are not automatically conflicts.
+10. Prefer updating existing rules over creating duplicates.
+11. Reply with: what rule changed, what evidence supports it, current status, and how it will affect future output.
 
 Rule lifecycle:
 

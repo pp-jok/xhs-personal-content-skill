@@ -6,6 +6,7 @@ from typing import Any, ClassVar, Literal, TypeVar, get_args
 
 
 ModelT = TypeVar("ModelT", bound="BaseModel")
+CURRENT_SCHEMA_VERSION = "1"
 
 TagScope = Literal[
     "benchmark_account",
@@ -22,6 +23,13 @@ RuleType = Literal["title", "structure", "topic", "cover", "script", "operation"
 RuleStatus = Literal["candidate", "approved", "testing", "validated", "rejected", "deprecated"]
 RuleStrength = Literal["weak", "medium", "strong"]
 RuleEvidenceSourceType = Literal["benchmark_post", "benchmark_analysis", "user_feedback", "own_post", "review_record"]
+FeedbackNature = Literal[
+    "explicit_user_rule",
+    "content_specific_feedback",
+    "inferred_preference",
+    "candidate_rule",
+    "uncertain",
+]
 ContentStatus = Literal["idea", "draft", "reviewing", "ready", "archived"]
 PublishStatus = Literal["planned", "preparing", "ready", "published", "cancelled"]
 QualityReviewType = Literal["pre_publish", "post_publish", "revision"]
@@ -29,6 +37,26 @@ InboxStatus = Literal["inbox", "capturing", "captured", "analyzed", "promoted_to
 CaptureStatus = Literal["pending", "success", "partial", "failed"]
 CaptureMethod = Literal["manual", "browser_authorized"]
 CapturedContentType = Literal["unknown", "image", "video", "mixed"]
+Actor = Literal["user", "codex", "system", "migration", "external_source"]
+ArtifactNature = Literal["fact", "derived", "inference", "generated", "recommendation", "decision"]
+DecisionStatus = Literal["pending", "confirmed", "rejected", "cancelled", "superseded"]
+ObjectType = Literal[
+    "creator_profile",
+    "benchmark_account",
+    "benchmark_post",
+    "content_inbox",
+    "capture_record",
+    "benchmark_analysis",
+    "custom_tag",
+    "rule_card",
+    "rule_evidence",
+    "topic_item",
+    "content_draft",
+    "content_quality_review",
+    "publish_task",
+    "own_post",
+    "review_record",
+]
 AnalysisTemplate = Literal[
     "video_tutorial",
     "video_personal_story",
@@ -95,6 +123,10 @@ def ensure_score(value: int, field_name: str) -> None:
 @dataclass
 class BaseModel:
     id: str
+    schema_version: str = CURRENT_SCHEMA_VERSION
+    version: int = 1
+    created_by: Actor = "user"
+    provenance_refs: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
     missing_fields: list[str] = field(default_factory=list)
@@ -108,6 +140,12 @@ class BaseModel:
 
     def __post_init__(self) -> None:
         require_text(self.id, "id")
+        require_text(self.schema_version, "schema_version")
+        ensure_non_negative_int(self.version, "version")
+        if self.version < 1:
+            raise ValidationError("version must be at least 1")
+        require_literal(self.created_by, Actor, "created_by")
+        ensure_list_items_are_text(self.provenance_refs, "provenance_refs")
         require_text(self.created_at, "created_at")
         require_text(self.updated_at, "updated_at")
         ensure_list_items_are_text(self.missing_fields, "missing_fields")
@@ -384,7 +422,7 @@ class RuleCard(BaseModel):
     risks: list[str] = field(default_factory=list)
     adaptation_notes: str = ""
     tags: list[str] = field(default_factory=list)
-    status: RuleStatus = "approved"
+    status: RuleStatus = "candidate"
     strength: RuleStrength = "weak"
     validation_count: int = 0
     success_count: int = 0
@@ -439,6 +477,122 @@ class RuleEvidence(BaseModel):
         require_text(self.evidence_type, "evidence_type")
         require_text(self.observable_fact, "observable_fact")
         require_text(self.inference, "inference")
+
+
+@dataclass
+class ProvenanceRecord(BaseModel):
+    collection_name: ClassVar[str] = "provenance-records"
+
+    target_object_type: ObjectType = "rule_card"
+    target_object_id: str = ""
+    source_object_type: ObjectType = "benchmark_analysis"
+    source_object_id: str = ""
+    source_version: int = 1
+    actor: Actor = "system"
+    artifact_nature: ArtifactNature = "fact"
+    method: str = ""
+    note: str = ""
+
+    def validate(self) -> None:
+        require_literal(self.target_object_type, ObjectType, "target_object_type")
+        require_text(self.target_object_id, "target_object_id")
+        require_literal(self.source_object_type, ObjectType, "source_object_type")
+        require_text(self.source_object_id, "source_object_id")
+        ensure_non_negative_int(self.source_version, "source_version")
+        if self.source_version < 1:
+            raise ValidationError("source_version must be at least 1")
+        require_literal(self.actor, Actor, "actor")
+        require_literal(self.artifact_nature, ArtifactNature, "artifact_nature")
+        require_text(self.method, "method")
+        ensure_optional_text(self.note, "note")
+
+
+@dataclass
+class DecisionRequest(BaseModel):
+    collection_name: ClassVar[str] = "decision-requests"
+
+    target_object_type: ObjectType = "rule_card"
+    target_object_id: str = ""
+    question: str = ""
+    options: list[str] = field(default_factory=list)
+    option_outcomes: dict[str, DecisionStatus] = field(default_factory=dict)
+    recommendation: str = ""
+    recommendation_reason: str = ""
+    impact: str = ""
+    status: DecisionStatus = "pending"
+    selected_option: str = ""
+    user_note: str = ""
+    resulting_state_changes: list[dict[str, Any]] = field(default_factory=list)
+    resolved_at: str | None = None
+    resolved_by: Actor | None = None
+
+    def validate(self) -> None:
+        require_literal(self.target_object_type, ObjectType, "target_object_type")
+        require_text(self.target_object_id, "target_object_id")
+        require_text(self.question, "question")
+        ensure_list_items_are_text(self.options, "options")
+        if len(self.options) < 2:
+            raise ValidationError("options must contain at least two choices")
+        if not self.option_outcomes:
+            self.option_outcomes.update(legacy_option_outcomes(self.options))
+        require_dict(self.option_outcomes, "option_outcomes")
+        for option, outcome in self.option_outcomes.items():
+            if option not in self.options:
+                raise ValidationError("option_outcomes keys must be present in options")
+            require_literal(outcome, DecisionStatus, "option_outcomes value")
+            if outcome == "pending":
+                raise ValidationError("option_outcomes cannot resolve to pending")
+        for option in self.options:
+            if option not in self.option_outcomes:
+                raise ValidationError("each option must have an explicit outcome")
+        require_text(self.recommendation, "recommendation")
+        if self.recommendation not in self.options:
+            raise ValidationError("recommendation must be one of options")
+        require_text(self.recommendation_reason, "recommendation_reason")
+        require_text(self.impact, "impact")
+        require_literal(self.status, DecisionStatus, "status")
+        ensure_optional_text(self.selected_option, "selected_option")
+        if self.selected_option and self.selected_option not in self.options:
+            raise ValidationError("selected_option must be one of options")
+        ensure_optional_text(self.user_note, "user_note")
+        require_list(self.resulting_state_changes, "resulting_state_changes")
+        for change in self.resulting_state_changes:
+            require_dict(change, "resulting_state_changes item")
+        ensure_optional_text(self.resolved_at, "resolved_at")
+        if self.resolved_by is not None:
+            require_literal(self.resolved_by, Actor, "resolved_by")
+        if self.status == "pending":
+            if self.selected_option or self.resolved_at or self.resulting_state_changes or self.resolved_by:
+                raise ValidationError("pending decisions cannot have selected_option, resolved_at, resolved_by, or state changes")
+        else:
+            require_text(self.selected_option, "selected_option")
+            require_text(self.resolved_at or "", "resolved_at")
+            require_text(self.resolved_by or "", "resolved_by")
+            selected_outcome = self.option_outcomes.get(self.selected_option)
+            if selected_outcome != self.status:
+                raise ValidationError("selected option outcome must match decision status")
+
+
+@dataclass
+class ObjectVersion(BaseModel):
+    collection_name: ClassVar[str] = "object-versions"
+
+    target_object_type: ObjectType = "rule_card"
+    target_object_id: str = ""
+    object_version: int = 1
+    snapshot: dict[str, Any] = field(default_factory=dict)
+    changed_by: Actor = "system"
+    change_note: str = ""
+
+    def validate(self) -> None:
+        require_literal(self.target_object_type, ObjectType, "target_object_type")
+        require_text(self.target_object_id, "target_object_id")
+        ensure_non_negative_int(self.object_version, "object_version")
+        if self.object_version < 1:
+            raise ValidationError("object_version must be at least 1")
+        require_dict(self.snapshot, "snapshot")
+        require_literal(self.changed_by, Actor, "changed_by")
+        ensure_optional_text(self.change_note, "change_note")
 
 
 @dataclass
@@ -612,6 +766,9 @@ MODEL_TYPES: dict[str, type[BaseModel]] = {
         CustomTag,
         RuleCard,
         RuleEvidence,
+        ProvenanceRecord,
+        DecisionRequest,
+        ObjectVersion,
         TopicItem,
         ContentDraft,
         ContentQualityReview,
@@ -620,3 +777,23 @@ MODEL_TYPES: dict[str, type[BaseModel]] = {
         ReviewRecord,
     ]
 }
+
+
+def legacy_option_outcomes(options: list[str]) -> dict[str, DecisionStatus]:
+    legacy = {
+        "confirm": "confirmed",
+        "approve": "confirmed",
+        "approved": "confirmed",
+        "reject": "rejected",
+        "rejected": "rejected",
+        "cancel": "cancelled",
+        "cancelled": "cancelled",
+        "supersede": "superseded",
+        "superseded": "superseded",
+    }
+    outcomes: dict[str, DecisionStatus] = {}
+    for option in options:
+        outcome = legacy.get(option)
+        if outcome:
+            outcomes[option] = outcome  # type: ignore[assignment]
+    return outcomes

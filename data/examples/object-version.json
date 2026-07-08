@@ -1,0 +1,13 @@
+{
+  "id": "rule-cards-rule-card-001-v1",
+  "target_object_type": "rule_card",
+  "target_object_id": "rule-card-001",
+  "object_version": 1,
+  "snapshot": {
+    "id": "rule-card-001",
+    "name": "标题具体规则",
+    "status": "candidate"
+  },
+  "changed_by": "system",
+  "change_note": "更新前快照。"
+}

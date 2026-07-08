@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -9,6 +10,16 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from app.models.core import BenchmarkPost, CreatorProfile, CustomTag  # noqa: E402
 from app.repositories import JsonRepository  # noqa: E402
 from app.workflows import BenchmarkToPublishWorkflow  # noqa: E402
+
+
+class RecordingWorkflowPromptService:
+    def __init__(self, wrapped: Any) -> None:
+        self.wrapped = wrapped
+        self.payloads: dict[str, list[dict[str, Any]]] = {}
+
+    def run(self, contract_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self.payloads.setdefault(contract_id, []).append(payload)
+        return self.wrapped.run(contract_id, payload)
 
 
 class BenchmarkToPublishWorkflowTests(unittest.TestCase):
@@ -48,6 +59,23 @@ class BenchmarkToPublishWorkflowTests(unittest.TestCase):
 
             self.assertEqual(first.publish_task.id, second.publish_task.id)
             self.assertEqual(second.publish_task.planned_publish_time, "2026-07-06T20:00:00+08:00")
+
+    def test_workflow_does_not_use_new_candidate_rules_in_same_generation_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            workflow = BenchmarkToPublishWorkflow(data_dir, PROJECT_ROOT / "prompts")
+            recorder = RecordingWorkflowPromptService(workflow.prompt_service)
+            workflow.prompt_service = recorder
+
+            result = workflow.run("creator-main", "benchmark-post-001", "2026-07-05T20:00:00+08:00")
+
+            topic_payload = recorder.payloads["generate_topic_pool"][0]
+            draft_payload = recorder.payloads["generate_content_draft"][0]
+            self.assertEqual(result.rule_cards[0].status, "candidate")
+            self.assertEqual(topic_payload["rule_cards"], [])
+            self.assertEqual(draft_payload["rule_cards"], [])
+            self.assertIn("候选规则", "\n".join(result.warnings))
 
     def _seed_data(self, data_dir: Path) -> None:
         JsonRepository(data_dir, CreatorProfile).create(

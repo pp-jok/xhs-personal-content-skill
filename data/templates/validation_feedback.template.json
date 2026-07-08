@@ -6,7 +6,10 @@
     {
       "step": "topic",
       "problem": "填写发现的问题。",
-      "suggestion": "填写下一轮建议。"
+      "suggestion": "填写下一轮建议。",
+      "feedback_nature": "inferred_preference",
+      "user_confirmed": false,
+      "note": "feedback_nature 可选 explicit_user_rule、content_specific_feedback、inferred_preference、candidate_rule、uncertain。只有 explicit_user_rule 且 user_confirmed=true 才会直接进入长期规则。"
     }
   ]
 }

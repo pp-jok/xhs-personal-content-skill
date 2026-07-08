@@ -14,6 +14,7 @@ from app.models.core import (
     TopicItem,
 )
 from app.repositories import JsonRepository
+from app.rules import select_active_rule_cards
 from app.services.mock_prompt_service import MockPromptService
 from app.services.prompt_contracts import load_contracts
 
@@ -83,13 +84,16 @@ class BenchmarkToPublishWorkflow:
         )
         warnings.extend(extracted.get("warnings", []))
         saved_rule_cards = self._save_rule_cards(post.id, extracted["rule_cards"])
+        active_rule_cards = select_active_rule_cards(saved_rule_cards)
+        if saved_rule_cards and not active_rule_cards:
+            warnings.append("新提取的候选规则需确认后才会用于正式选题和草稿生成。")
 
         generated_topics = self.prompt_service.run(
             "generate_topic_pool",
             {
                 "creator_profile": creator.to_dict(),
                 "custom_tags": [tag.to_dict() for tag in tags],
-                "rule_cards": [rule.to_dict() for rule in saved_rule_cards],
+                "rule_cards": [rule.to_dict() for rule in active_rule_cards],
                 "reference_posts": [post.to_dict()],
                 "topic_count": topic_count,
             },
@@ -102,7 +106,7 @@ class BenchmarkToPublishWorkflow:
             {
                 "creator_profile": creator.to_dict(),
                 "topic": saved_topics[0].to_dict(),
-                "rule_cards": [rule.to_dict() for rule in saved_rule_cards],
+                "rule_cards": [rule.to_dict() for rule in active_rule_cards],
                 "custom_tags": [tag.to_dict() for tag in tags],
             },
         )
@@ -134,7 +138,9 @@ class BenchmarkToPublishWorkflow:
         for index, rule_data in enumerate(rule_cards, start=1):
             data = dict(rule_data)
             data["id"] = f"rule-card-from-{post_id}-{index}"
-            saved.append(self.rule_cards.upsert(RuleCard.from_dict(data)))
+            data["created_by"] = "codex"
+            data["status"] = "candidate"
+            saved.append(self.rule_cards.upsert(RuleCard.from_dict(data), changed_by="codex", change_note="run-workflow rule generation"))
         return saved
 
     def _save_topics(self, post_id: str, topics: list[dict[str, Any]]) -> list[TopicItem]:

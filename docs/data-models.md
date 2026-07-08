@@ -2,7 +2,7 @@
 
 ## 通用规则
 
-- 每个模型都有 `id`、`created_at`、`updated_at`。
+- 每个模型都有 `id`、`schema_version`、`version`、`created_by`、`provenance_refs`、`created_at`、`updated_at`。
 - 每个模型都支持低门槛录入元数据：`missing_fields`、`confidence`、`source_type`、`source_note`、`user_reason`、`created_from`。
 - 每条记录存为一个 JSON 文件。
 - 标签字段统一保存标签 `id` 列表。
@@ -21,6 +21,19 @@
 - `source_note`：来源补充说明。
 - `user_reason`：用户给出的选择、喜欢或不喜欢原因。
 - `created_from`：创建来源，例如 `add-feedback`、`manual-intake`、`validate-real-sample`。
+- `created_by`：创建者，例如 `user`、`codex`、`system`、`migration`、`external_source`。
+- `provenance_refs`：关联的来源记录 id 列表。
+- `version`：对象版本，更新时递增。
+- `schema_version`：数据结构版本，当前为 `1`。它独立于应用版本号，例如应用版本可以是 `1.3.0`，但 schema version 仍保持 `1`。
+
+语义边界：
+
+- `created_by`：谁创建对象。
+- `resolved_by`：谁解决决策。
+- `changed_by`：谁触发版本变化。
+- provenance `actor`：谁产生某条来源、事实、判断或决策证据。
+
+四者不能混用。`DecisionRequest.created_by=codex` 只表示 Codex 创建了待决策事项，不表示用户已经确认。
 
 原则：
 
@@ -100,7 +113,7 @@
 
 基础校验：规则名称、摘要和适配建议不能为空；来源、场景、示例、风险和标签必须是字符串列表；状态必须是 `candidate`、`approved`、`testing`、`validated`、`rejected`、`deprecated` 之一；强度必须是 `weak`、`medium`、`strong` 之一；验证次数不能为负数。
 
-说明：旧规则默认视为 `approved`，避免破坏旧工作区。生成草稿时应优先参考 `validated` 或 `strong` 规则。
+说明：`RuleCard` 缺少 `status` 时安全默认为 `candidate`。旧数据如果显式写了 `approved` 仍保持 `approved`。Codex 推导、对标分析、内容拆解、反馈推导和 workflow 生成的规则默认都是 `candidate`；只有结构化标记为 `explicit_user_rule`、`user_confirmed=true`，并保留用户决策证据时，才能直接保存为 `approved`。正式生成默认只读取 `approved`、`testing`、`validated` 规则；`candidate`、`rejected`、`deprecated` 不进入选题、草稿或复盘 prompt 上下文。
 
 ## RuleEvidence
 
@@ -111,6 +124,38 @@
 基础校验：规则、来源、来源片段、证据类型、可见事实和推断不能为空；来源类型必须是 `benchmark_post`、`benchmark_analysis`、`user_feedback`、`own_post`、`review_record` 之一。
 
 说明：`observable_fact` 只保存真实可见内容，`inference` 保存由 Codex 或运营人员做出的判断。
+
+## ProvenanceRecord
+
+用途：记录对象来源，帮助用户区分已有资料、客观事实、Codex 判断、生成内容和用户决策。
+
+字段：`id`、`target_object_type`、`target_object_id`、`source_object_type`、`source_object_id`、`source_version`、`actor`、`artifact_nature`、`method`、`note`。
+
+基础校验：目标对象、来源对象和方法不能为空；`target_object_type` 和 `source_object_type` 使用统一业务对象类型，例如 `creator_profile`、`rule_card`、`content_draft`、`benchmark_analysis`；`actor` 必须是 `user`、`codex`、`system`、`migration`、`external_source` 之一；`artifact_nature` 必须是 `fact`、`derived`、`inference`、`generated`、`recommendation`、`decision` 之一。
+
+说明：`actor` 和 `artifact_nature` 必须分开。例如 Codex 可以产生 `inference`，但不能把它写成用户确认的事实。
+
+业务代码保存 `ProvenanceRecord` 必须使用 `save_provenance_record()`，不要直接调用 `JsonRepository.upsert()`。该 helper 会校验 target/source/source_version 是否存在，避免来源记录绕过完整性检查。
+
+## DecisionRequest
+
+用途：记录需要用户明确确认或拒绝的事项，尤其是候选规则是否进入长期规则。
+
+字段：`id`、`target_object_type`、`target_object_id`、`question`、`options`、`option_outcomes`、`recommendation`、`recommendation_reason`、`impact`、`status`、`selected_option`、`user_note`、`resulting_state_changes`、`resolved_at`、`resolved_by`。
+
+基础校验：问题、选项、推荐理由和影响不能为空；选项至少 2 个；推荐和用户选择必须来自选项；`option_outcomes` 必须显式把每个显示选项映射到 `confirmed`、`rejected`、`cancelled` 或 `superseded`；状态必须是 `pending`、`confirmed`、`rejected`、`cancelled`、`superseded` 之一。`pending` 不能带 `selected_option`、`resolved_at`、`resolved_by` 或状态变化；结束态必须有 `selected_option`、`resolved_at` 和 `resolved_by`。
+
+说明：候选规则不能因为存在于文件中就视为已确认。只有用户确认后的状态变化才可写入 `resulting_state_changes`。只有 `resolved_by=user` 的已解决决策，或明确的 user decision provenance，才能进入用户态的 `【已由你决定】` 区块；迁移或系统解决的决策不会被冒充为用户确认。结束态不能再次解析。
+
+## ObjectVersion
+
+用途：保存重要对象更新前快照，便于追溯账号档案、规则卡片和内容草稿的变化。
+
+字段：`id`、`target_object_type`、`target_object_id`、`object_version`、`snapshot`、`changed_by`、`change_note`。
+
+基础校验：目标对象、版本号和快照不能为空；`snapshot` 必须是对象。
+
+说明：第一版只为 `CreatorProfile`、`RuleCard` 和 `ContentDraft` 保存更新前快照，不做完整恢复界面。`changed_by` 和 `change_note` 应记录真实修改来源，例如用户更新账号档案为 `user`，Codex 生成草稿为 `codex`。
 
 ## TopicItem
 
