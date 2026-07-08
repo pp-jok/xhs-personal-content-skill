@@ -139,6 +139,7 @@ python3 -m app.cli.main show-object-versions \
 ```
 
 当前只为 `creator-profiles`、`rule-cards` 和 `content-drafts` 保存更新前快照。快照内部的 `target_object_type` 使用统一业务类型，例如 `creator_profile`、`rule_card`、`content_draft`。
+`show-object-versions` 只接受这三个版本化集合；其他集合不会在运行时进入无意义查询。
 
 ## 查看用户态上下文
 
@@ -157,8 +158,10 @@ python3 -m app.cli.main show-user-context \
 - `【Codex 判断】`
 - `【Codex 生成】`
 - `【需要你决定】`
-- `【已由你确认】`
+- `【已由你决定】`
 - `【信息不足】`
+
+`【已由你决定】` 只在存在 `resolved_by=user` 的已解决决策，或明确的 user decision provenance 时展示。`created_by=codex` 只表示决策请求由 Codex 创建，不能作为用户确认依据。
 
 ## 初始化账号工作区
 
@@ -219,7 +222,14 @@ python3 -m app.cli.main add-feedback \
   --file /path/to/validation_feedback.json
 ```
 
-该命令会把新的 `issues` 追加到现有反馈中，适合记录“标题太 AI”“封面可以”“以后不要这样写”等用户偏好。
+该命令会把新的 `issues` 追加到现有反馈中，适合记录“标题太 AI”“封面可以”等用户偏好。
+
+反馈是否能直接沉淀为长期规则，必须由结构化字段决定：
+
+- `feedback_nature=explicit_user_rule` 且 `user_confirmed=true`：保存为用户已决定的长期规则。
+- `feedback_nature=inferred_preference` 或 `candidate_rule`：保存为候选规则，并创建待用户决定事项。
+- `feedback_nature=content_specific_feedback`：只作为当前内容反馈，不自动提升为长期规则。
+- `feedback_nature=uncertain` 或缺失：采用安全默认，不自动 approved。
 
 ## 校验工作区
 

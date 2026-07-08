@@ -23,6 +23,13 @@ RuleType = Literal["title", "structure", "topic", "cover", "script", "operation"
 RuleStatus = Literal["candidate", "approved", "testing", "validated", "rejected", "deprecated"]
 RuleStrength = Literal["weak", "medium", "strong"]
 RuleEvidenceSourceType = Literal["benchmark_post", "benchmark_analysis", "user_feedback", "own_post", "review_record"]
+FeedbackNature = Literal[
+    "explicit_user_rule",
+    "content_specific_feedback",
+    "inferred_preference",
+    "candidate_rule",
+    "uncertain",
+]
 ContentStatus = Literal["idea", "draft", "reviewing", "ready", "archived"]
 PublishStatus = Literal["planned", "preparing", "ready", "published", "cancelled"]
 QualityReviewType = Literal["pre_publish", "post_publish", "revision"]
@@ -415,7 +422,7 @@ class RuleCard(BaseModel):
     risks: list[str] = field(default_factory=list)
     adaptation_notes: str = ""
     tags: list[str] = field(default_factory=list)
-    status: RuleStatus = "approved"
+    status: RuleStatus = "candidate"
     strength: RuleStrength = "weak"
     validation_count: int = 0
     success_count: int = 0
@@ -517,6 +524,7 @@ class DecisionRequest(BaseModel):
     user_note: str = ""
     resulting_state_changes: list[dict[str, Any]] = field(default_factory=list)
     resolved_at: str | None = None
+    resolved_by: Actor | None = None
 
     def validate(self) -> None:
         require_literal(self.target_object_type, ObjectType, "target_object_type")
@@ -551,12 +559,15 @@ class DecisionRequest(BaseModel):
         for change in self.resulting_state_changes:
             require_dict(change, "resulting_state_changes item")
         ensure_optional_text(self.resolved_at, "resolved_at")
+        if self.resolved_by is not None:
+            require_literal(self.resolved_by, Actor, "resolved_by")
         if self.status == "pending":
-            if self.selected_option or self.resolved_at or self.resulting_state_changes:
-                raise ValidationError("pending decisions cannot have selected_option, resolved_at, or state changes")
+            if self.selected_option or self.resolved_at or self.resulting_state_changes or self.resolved_by:
+                raise ValidationError("pending decisions cannot have selected_option, resolved_at, resolved_by, or state changes")
         else:
             require_text(self.selected_option, "selected_option")
             require_text(self.resolved_at or "", "resolved_at")
+            require_text(self.resolved_by or "", "resolved_by")
             selected_outcome = self.option_outcomes.get(self.selected_option)
             if selected_outcome != self.status:
                 raise ValidationError("selected option outcome must match decision status")

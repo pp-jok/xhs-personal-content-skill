@@ -17,8 +17,13 @@ MVP PR-1：最小来源追踪、用户决策与版本能力。
 
 - `JsonRepository.update` 会为账号档案、规则卡片和内容草稿保留上一版本快照，并递增对象版本。
 - `JsonRepository.upsert` 对版本化对象也会保留上一版本快照，并记录 `changed_by` 与 `change_note`。
-- 用户态输出约束补充来源区块：已有资料、规则约束、客观数据、Codex 判断、Codex 生成、需要用户决定、已由用户确认和信息不足。
+- 用户态输出约束补充来源区块：已有资料、规则约束、客观数据、Codex 判断、Codex 生成、需要用户决定、已由用户决定和信息不足。
 - `schema_version` 与应用版本解耦，当前数据 schema version 为 `1`。
+- 删除基于关键词判断长期规则的逻辑；反馈是否为长期规则改由 `feedback_nature` 和 `user_confirmed` 等结构化输入决定。
+- `RuleCard` 缺少 `status` 时安全默认为 `candidate`；Codex 生成规则即使声明 `approved`，没有用户确认依据也会降级为候选规则。
+- `DecisionRequest` 新增 `resolved_by`，用户态上下文只把 `resolved_by=user` 或明确 user decision provenance 视为用户决定。
+- `show-object-versions` 限制为 `creator-profiles`、`rule-cards` 和 `content-drafts`。
+- provenance 正式保存入口增加 target/source/source_version 完整性校验。
 
 ### Boundaries
 

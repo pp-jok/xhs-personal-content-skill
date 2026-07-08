@@ -35,7 +35,7 @@ from app.models.core import (
     ValidationError,
     now_iso,
 )
-from app.repositories import JsonRepository
+from app.repositories import VERSIONED_COLLECTIONS, JsonRepository
 from app.quality import build_quality_report
 from app.rules import build_rule_and_evidence_from_analysis, check_rule_relations
 from app.services.mock_prompt_service import MockPromptService
@@ -140,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     versions_parser = subparsers.add_parser("show-object-versions", help="Show stored version snapshots for one object.")
     versions_parser.add_argument("--workspace", required=True, help="Workspace directory.")
-    versions_parser.add_argument("--collection", choices=sorted(MODEL_TYPES), required=True, help="Collection name.")
+    versions_parser.add_argument("--collection", choices=sorted(VERSIONED_COLLECTIONS), required=True, help="Collection name.")
     versions_parser.add_argument("--record-id", required=True, help="Record id.")
     versions_parser.set_defaults(handler=handle_show_object_versions)
 
@@ -317,7 +317,10 @@ def handle_import_json(args: argparse.Namespace) -> dict[str, Any]:
     if isinstance(model, ProvenanceRecord):
         validate_provenance_record(args.data_dir, model)
     repo = JsonRepository(args.data_dir, model_type)
-    saved = repo.upsert(model, changed_by="migration", change_note="import-json --upsert") if args.upsert else repo.create(model)
+    if isinstance(model, ProvenanceRecord):
+        saved = save_provenance_record(args.data_dir, model, upsert=args.upsert)
+    else:
+        saved = repo.upsert(model, changed_by="migration", change_note="import-json --upsert") if args.upsert else repo.create(model)
     return {"collection": args.collection, "id": saved.id}
 
 
@@ -405,6 +408,7 @@ def handle_resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
             "selected_option": selected,
             "user_note": args.user_note,
             "resolved_at": now_iso(),
+            "resolved_by": "user",
             "resulting_state_changes": changes,
         },
         changed_by="user",
@@ -421,6 +425,8 @@ def handle_resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
 def handle_show_object_versions(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
+    if args.collection not in VERSIONED_COLLECTIONS:
+        raise ValueError(f"show-object-versions only supports: {', '.join(sorted(VERSIONED_COLLECTIONS))}")
     target_type = COLLECTION_TO_OBJECT_TYPE[args.collection]
     versions = [
         item
@@ -1097,8 +1103,28 @@ def assert_target_exists(workspace: Path, target_type: str, target_id: str) -> B
 
 def validate_provenance_record(workspace: str | Path, record: ProvenanceRecord) -> None:
     workspace_path = Path(workspace)
-    assert_target_exists(workspace_path, record.target_object_type, record.target_object_id)
-    assert_target_exists(workspace_path, record.source_object_type, record.source_object_id)
+    target = assert_target_exists(workspace_path, record.target_object_type, record.target_object_id)
+    source = assert_target_exists(workspace_path, record.source_object_type, record.source_object_id)
+    if record.target_object_id != target.id:
+        raise ValueError("provenance target does not match the stored target object")
+    if record.source_object_id != source.id:
+        raise ValueError("provenance source does not match the stored source object")
+    if record.source_version > source.version:
+        versions = JsonRepository(workspace_path, ObjectVersion).list_all()
+        has_snapshot = any(
+            item.target_object_type == record.source_object_type
+            and item.target_object_id == record.source_object_id
+            and item.object_version == record.source_version
+            for item in versions
+        )
+        if not has_snapshot:
+            raise ValueError("provenance source_version does not exist")
+
+
+def save_provenance_record(workspace: str | Path, record: ProvenanceRecord, upsert: bool = True) -> ProvenanceRecord:
+    validate_provenance_record(workspace, record)
+    repo = JsonRepository(workspace, ProvenanceRecord)
+    return repo.upsert(record) if upsert else repo.create(record)
 
 
 def parse_option_outcomes(options: list[str], raw_mappings: list[str]) -> dict[str, str]:
@@ -1202,7 +1228,7 @@ def build_user_context_sections(
         "【Codex 判断】": [],
         "【Codex 生成】": [],
         "【需要你决定】": [],
-        "【已由你确认】": [],
+        "【已由你决定】": [],
         "【信息不足】": [],
     }
     data = item.to_dict()
@@ -1222,16 +1248,17 @@ def build_user_context_sections(
 
     if isinstance(item, RuleCard):
         sections["【规则约束】"].append(item.rule_summary)
-        if item.status == "candidate":
+        has_pending_decision = any(decision.status == "pending" for decision in decisions)
+        if item.status == "candidate" and not has_pending_decision:
             sections["【需要你决定】"].append("候选规则，需要确认后才会长期生效。")
         elif item.status in {"approved", "testing", "validated"}:
             if has_user_confirmation(provenance, decisions):
-                sections["【已由你确认】"].append(f"规则当前状态：{item.status}")
+                sections["【已由你决定】"].append(f"规则当前状态：{item.status}")
             else:
                 sections["【规则状态】"].append(f"当前状态：{item.status}")
         elif item.status in {"rejected", "deprecated"}:
             if has_user_confirmation(provenance, decisions):
-                sections["【已由你确认】"].append(f"这条规则已标记为：{item.status}")
+                sections["【已由你决定】"].append(f"这条规则已标记为：{item.status}")
             else:
                 sections["【规则状态】"].append(f"当前状态：{item.status}")
 
@@ -1246,17 +1273,17 @@ def build_user_context_sections(
     for decision in decisions:
         if decision.status == "pending":
             sections["【需要你决定】"].append(decision.question)
-        elif decision.status in {"confirmed", "rejected"}:
-            sections["【已由你确认】"].append(f"{decision.question} -> {decision.selected_option}")
+        elif decision.status in {"confirmed", "rejected", "cancelled"} and decision.resolved_by == "user":
+            sections["【已由你决定】"].append(f"{decision.question} -> {decision.selected_option}")
 
     return sections
 
 
 def has_user_confirmation(provenance: list[ProvenanceRecord], decisions: list[DecisionRequest]) -> bool:
-    if any(decision.status in {"confirmed", "rejected"} and decision.created_by == "codex" for decision in decisions):
+    if any(decision.status in {"confirmed", "rejected"} and decision.resolved_by == "user" for decision in decisions):
         return True
     return any(
-        record.actor == "user" and record.artifact_nature == "decision" and "confirm" in record.method
+        record.actor == "user" and record.artifact_nature == "decision"
         for record in provenance
     )
 
@@ -1306,9 +1333,25 @@ def save_rule_cards(workspace: Path, post_id: str, rule_cards: list[dict[str, An
     for index, rule_data in enumerate(rule_cards, start=1):
         data = dict(rule_data)
         data["id"] = f"rule-card-from-{post_id}-{index}"
-        data.setdefault("created_by", "codex")
-        saved.append(repo.upsert(RuleCard.from_dict(data), changed_by="codex", change_note="generate-rule-cards"))
+        data = enforce_rule_safety_defaults(data)
+        saved.append(repo.upsert(RuleCard.from_dict(data), changed_by=data["created_by"], change_note="generate-rule-cards"))
     return saved
+
+
+def enforce_rule_safety_defaults(rule_data: dict[str, Any]) -> dict[str, Any]:
+    data = dict(rule_data)
+    created_by = data.get("created_by") or "codex"
+    has_user_confirmation = (
+        created_by == "user"
+        and data.get("feedback_nature") == "explicit_user_rule"
+        and data.get("user_confirmed") is True
+    )
+    data["created_by"] = created_by
+    if not has_user_confirmation:
+        data["status"] = "candidate"
+        if created_by != "user":
+            data["created_by"] = "codex"
+    return {key: value for key, value in data.items() if key in RuleCard.__dataclass_fields__}
 
 
 def save_topics(workspace: Path, post_id: str, topics: list[dict[str, Any]]) -> list[TopicItem]:
@@ -1354,9 +1397,11 @@ def create_feedback_rule_cards(workspace: Path, issues: list[Any]) -> list[str]:
         suggestion = str(issue.get("suggestion") or "").strip()
         if not problem and not suggestion:
             continue
+        feedback_nature = normalize_feedback_nature(issue.get("feedback_nature"))
+        user_confirmed = issue.get("user_confirmed") is True
         rule_type = feedback_step_to_rule_type(step)
         rule_id = f"feedback-rule-{rule_type}-{len(saved_ids) + existing_count + 1}"
-        explicit_instruction = is_explicit_long_term_instruction(problem, suggestion)
+        explicit_instruction = feedback_nature == "explicit_user_rule" and user_confirmed
         status = "approved" if explicit_instruction else "candidate"
         created_by: Actor = "user" if explicit_instruction else "codex"
         rule = RuleCard(
@@ -1379,31 +1424,69 @@ def create_feedback_rule_cards(workspace: Path, issues: list[Any]) -> list[str]:
             created_by=created_by,
         )
         saved = repo.upsert(rule, changed_by=created_by, change_note="add-feedback")
-        if status == "candidate":
-            decision = DecisionRequest(
-                id=build_decision_id(workspace, "rule_card", saved.id, "是否确认这条反馈推导规则？"),
-                target_object_type="rule_card",
-                target_object_id=saved.id,
-                question="是否确认这条反馈推导规则？",
-                options=["confirm", "reject"],
-                option_outcomes={"confirm": "confirmed", "reject": "rejected"},
-                recommendation="confirm",
-                recommendation_reason="这条规则来自反馈推导，需要你确认后才长期生效。",
-                impact="确认后进入长期规则；拒绝后不参与后续生成。",
-                created_by="codex",
-                source_type="user_feedback",
-                source_note=step,
-                created_from="add-feedback",
-            )
-            JsonRepository(workspace, DecisionRequest).upsert(decision, changed_by="codex", change_note="add-feedback candidate decision")
+        if explicit_instruction:
+            create_feedback_confirmation_decision(workspace, saved, step)
+        elif feedback_nature in {"inferred_preference", "candidate_rule", "uncertain", ""}:
+            create_feedback_candidate_decision(workspace, saved, step)
         saved_ids.append(rule.id)
     return saved_ids
 
 
-def is_explicit_long_term_instruction(problem: str, suggestion: str) -> bool:
-    text = f"{problem}\n{suggestion}"
-    markers = ["以后不要", "以后都", "以后所有", "永远不要", "长期", "不要再用", "别再用"]
-    return any(marker in text for marker in markers)
+def normalize_feedback_nature(value: Any) -> str:
+    if value in {"explicit_user_rule", "content_specific_feedback", "inferred_preference", "candidate_rule", "uncertain"}:
+        return str(value)
+    return ""
+
+
+def create_feedback_candidate_decision(workspace: Path, rule: RuleCard, step: str) -> DecisionRequest:
+    decision = DecisionRequest(
+        id=build_decision_id(workspace, "rule_card", rule.id, "是否确认这条反馈推导规则？"),
+        target_object_type="rule_card",
+        target_object_id=rule.id,
+        question="是否确认这条反馈推导规则？",
+        options=["confirm", "reject"],
+        option_outcomes={"confirm": "confirmed", "reject": "rejected"},
+        recommendation="confirm",
+        recommendation_reason="这条规则来自反馈推导，需要你确认后才长期生效。",
+        impact="确认后进入长期规则；拒绝后不参与后续生成。",
+        created_by="codex",
+        source_type="user_feedback",
+        source_note=step,
+        created_from="add-feedback",
+    )
+    return JsonRepository(workspace, DecisionRequest).upsert(
+        decision,
+        changed_by="codex",
+        change_note="add-feedback candidate decision",
+    )
+
+
+def create_feedback_confirmation_decision(workspace: Path, rule: RuleCard, step: str) -> DecisionRequest:
+    decision = DecisionRequest(
+        id=build_decision_id(workspace, "rule_card", rule.id, "是否将这条反馈作为长期规则？"),
+        target_object_type="rule_card",
+        target_object_id=rule.id,
+        question="是否将这条反馈作为长期规则？",
+        options=["确认长期使用", "不作为长期规则"],
+        option_outcomes={"确认长期使用": "confirmed", "不作为长期规则": "rejected"},
+        recommendation="确认长期使用",
+        recommendation_reason="用户结构化输入已明确这是长期规则。",
+        impact="确认后进入长期规则。",
+        status="confirmed",
+        selected_option="确认长期使用",
+        resulting_state_changes=[{"target_object_type": "rule_card", "target_object_id": rule.id, "field": "status", "value": "approved"}],
+        resolved_at=now_iso(),
+        resolved_by="user",
+        created_by="codex",
+        source_type="user_feedback",
+        source_note=step,
+        created_from="add-feedback",
+    )
+    return JsonRepository(workspace, DecisionRequest).upsert(
+        decision,
+        changed_by="user",
+        change_note="add-feedback explicit user rule decision",
+    )
 
 
 def feedback_step_to_rule_type(step: str) -> str:

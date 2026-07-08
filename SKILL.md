@@ -40,10 +40,11 @@ When a response mixes saved account memory, observed post facts, Codex judgment,
 - `【Codex 判断】`
 - `【Codex 生成】`
 - `【需要你决定】`
-- `【已由你确认】`
+- `【已由你决定】`
 - `【信息不足】`
 
 Do not label every sentence. Use only the sections that help the user decide. Candidate rules must stay under `【需要你决定】` until the user confirms them.
+Treat `created_by`, `resolved_by`, `changed_by`, and provenance `actor` as separate evidence. A rule is only “decided by the user” when a resolved decision has `resolved_by=user` or explicit user decision provenance.
 
 Good default phrases:
 
@@ -137,6 +138,13 @@ Use this normal reply shape:
 ```
 
 ### Preference Tuning
+
+When recording feedback, do not infer long-term rules from words such as “长期” or “以后不要”. Use structured feedback nature instead:
+
+- `explicit_user_rule` with `user_confirmed=true`: save as a user-approved long-term rule and keep decision evidence.
+- `inferred_preference` or `candidate_rule`: save as a Codex candidate and ask the user to decide.
+- `content_specific_feedback`: keep it local to the current content; do not promote it to an approved long-term rule.
+- `uncertain` or missing nature: use the safe default and do not approve automatically.
 
 When the user says something is good or bad, turn it into an enduring preference:
 
@@ -375,7 +383,7 @@ Trigger examples:
 
 - “这个标题太 AI”
 - “这个封面可以”
-- “以后不要这样写”
+- “这篇先不要这样写”
 - “这个规则适合我”
 - “确认这条规则”
 - “这条规则验证成功”

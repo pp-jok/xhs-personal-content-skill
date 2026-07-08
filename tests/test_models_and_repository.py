@@ -212,6 +212,7 @@ class ModelTests(unittest.TestCase):
             status="confirmed",
             selected_option="确认使用",
             resolved_at="2026-07-08T00:00:00Z",
+            resolved_by="user",
             resulting_state_changes=[{"field": "status", "value": "approved"}],
         )
         self.assertEqual(valid_resolved.status, "confirmed")
@@ -219,6 +220,7 @@ class ModelTests(unittest.TestCase):
         invalid_cases = [
             {"status": "confirmed", "selected_option": "", "resolved_at": None},
             {"status": "pending", "selected_option": "确认使用", "resolved_at": "2026-07-08T00:00:00Z"},
+            {"status": "pending", "selected_option": "", "resolved_at": None, "resolved_by": "user"},
             {
                 "status": "pending",
                 "selected_option": "",
@@ -226,6 +228,7 @@ class ModelTests(unittest.TestCase):
                 "resulting_state_changes": [{"field": "status"}],
             },
             {"status": "rejected", "selected_option": "确认使用", "resolved_at": "2026-07-08T00:00:00Z"},
+            {"status": "confirmed", "selected_option": "确认使用", "resolved_at": "2026-07-08T00:00:00Z", "resolved_by": None},
             {"status": "cancelled", "selected_option": "", "resolved_at": None},
             {"status": "superseded", "selected_option": "", "resolved_at": None},
         ]
@@ -243,6 +246,34 @@ class ModelTests(unittest.TestCase):
                     impact="确认后生效。",
                     **case,
                 )
+
+    def test_rule_card_default_status_is_candidate(self) -> None:
+        rule = RuleCard(
+            id="rule-default-status",
+            name="默认候选规则",
+            type="title",
+            source_ids=["analysis-001"],
+            applicable_scenarios=["标题"],
+            rule_summary="缺少 status 时不能直接进入正式规则。",
+            examples=["例子"],
+            risks=["风险"],
+            adaptation_notes="需要确认。",
+        )
+        approved = RuleCard(
+            id="rule-explicit-approved",
+            name="显式正式规则",
+            type="title",
+            source_ids=["user-feedback"],
+            applicable_scenarios=["标题"],
+            rule_summary="用户明确确认的长期规则。",
+            examples=["例子"],
+            risks=["风险"],
+            adaptation_notes="已确认。",
+            status="approved",
+        )
+
+        self.assertEqual(rule.status, "candidate")
+        self.assertEqual(approved.status, "approved")
 
     def test_repository_update_preserves_previous_version_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

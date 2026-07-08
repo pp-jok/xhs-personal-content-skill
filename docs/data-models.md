@@ -26,6 +26,15 @@
 - `version`：对象版本，更新时递增。
 - `schema_version`：数据结构版本，当前为 `1`。它独立于应用版本号，例如应用版本可以是 `1.3.0`，但 schema version 仍保持 `1`。
 
+语义边界：
+
+- `created_by`：谁创建对象。
+- `resolved_by`：谁解决决策。
+- `changed_by`：谁触发版本变化。
+- provenance `actor`：谁产生某条来源、事实、判断或决策证据。
+
+四者不能混用。`DecisionRequest.created_by=codex` 只表示 Codex 创建了待决策事项，不表示用户已经确认。
+
 原则：
 
 - 能保存就先保存。
@@ -104,7 +113,7 @@
 
 基础校验：规则名称、摘要和适配建议不能为空；来源、场景、示例、风险和标签必须是字符串列表；状态必须是 `candidate`、`approved`、`testing`、`validated`、`rejected`、`deprecated` 之一；强度必须是 `weak`、`medium`、`strong` 之一；验证次数不能为负数。
 
-说明：旧规则默认视为 `approved`，避免破坏旧工作区。生成草稿时应优先参考 `validated` 或 `strong` 规则。
+说明：`RuleCard` 缺少 `status` 时安全默认为 `candidate`。旧数据如果显式写了 `approved` 仍保持 `approved`。Codex 推导、对标分析、内容拆解、反馈推导和 workflow 生成的规则默认都是 `candidate`；只有结构化标记为 `explicit_user_rule`、`user_confirmed=true`，并保留用户决策证据时，才能直接保存为 `approved`。生成草稿时应优先参考 `validated` 或 `strong` 规则。
 
 ## RuleEvidence
 
@@ -130,11 +139,11 @@
 
 用途：记录需要用户明确确认或拒绝的事项，尤其是候选规则是否进入长期规则。
 
-字段：`id`、`target_object_type`、`target_object_id`、`question`、`options`、`option_outcomes`、`recommendation`、`recommendation_reason`、`impact`、`status`、`selected_option`、`user_note`、`resulting_state_changes`、`resolved_at`。
+字段：`id`、`target_object_type`、`target_object_id`、`question`、`options`、`option_outcomes`、`recommendation`、`recommendation_reason`、`impact`、`status`、`selected_option`、`user_note`、`resulting_state_changes`、`resolved_at`、`resolved_by`。
 
-基础校验：问题、选项、推荐理由和影响不能为空；选项至少 2 个；推荐和用户选择必须来自选项；`option_outcomes` 必须显式把每个显示选项映射到 `confirmed`、`rejected`、`cancelled` 或 `superseded`；状态必须是 `pending`、`confirmed`、`rejected`、`cancelled`、`superseded` 之一。
+基础校验：问题、选项、推荐理由和影响不能为空；选项至少 2 个；推荐和用户选择必须来自选项；`option_outcomes` 必须显式把每个显示选项映射到 `confirmed`、`rejected`、`cancelled` 或 `superseded`；状态必须是 `pending`、`confirmed`、`rejected`、`cancelled`、`superseded` 之一。`pending` 不能带 `selected_option`、`resolved_at`、`resolved_by` 或状态变化；结束态必须有 `selected_option`、`resolved_at` 和 `resolved_by`。
 
-说明：候选规则不能因为存在于文件中就视为已确认。只有用户确认后的状态变化才可写入 `resulting_state_changes`。`pending` 不能带 `selected_option`、`resolved_at` 或状态变化；结束态不能再次解析。
+说明：候选规则不能因为存在于文件中就视为已确认。只有用户确认后的状态变化才可写入 `resulting_state_changes`。只有 `resolved_by=user` 的已解决决策，或明确的 user decision provenance，才能进入用户态的 `【已由你决定】` 区块；迁移或系统解决的决策不会被冒充为用户确认。结束态不能再次解析。
 
 ## ObjectVersion
 

@@ -134,7 +134,9 @@ class BenchmarkToPublishWorkflow:
         for index, rule_data in enumerate(rule_cards, start=1):
             data = dict(rule_data)
             data["id"] = f"rule-card-from-{post_id}-{index}"
-            saved.append(self.rule_cards.upsert(RuleCard.from_dict(data)))
+            data["created_by"] = "codex"
+            data["status"] = "candidate"
+            saved.append(self.rule_cards.upsert(RuleCard.from_dict(data), changed_by="codex", change_note="run-workflow rule generation"))
         return saved
 
     def _save_topics(self, post_id: str, topics: list[dict[str, Any]]) -> list[TopicItem]:
