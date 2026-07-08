@@ -24,6 +24,10 @@ MVP PR-1：最小来源追踪、用户决策与版本能力。
 - `DecisionRequest` 新增 `resolved_by`，用户态上下文只把 `resolved_by=user` 或明确 user decision provenance 视为用户决定。
 - `show-object-versions` 限制为 `creator-profiles`、`rule-cards` 和 `content-drafts`。
 - provenance 正式保存入口增加 target/source/source_version 完整性校验。
+- 新增 active rule selection：正式生成默认只使用 `approved`、`testing`、`validated`，排除 `candidate`、`rejected`、`deprecated`。
+- `BenchmarkToPublishWorkflow` 不再把同轮提取的新 candidate 规则直接用于选题或草稿生成。
+- 用户态上下文会检测 RuleCard 当前状态与用户历史决策是否冲突，冲突时进入信息不足，不冒充用户已决定。
+- 结构化 `explicit_user_rule + user_confirmed=true` 会保存 user decision provenance，便于审计确认来源。
 
 ### Boundaries
 

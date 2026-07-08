@@ -113,7 +113,7 @@
 
 基础校验：规则名称、摘要和适配建议不能为空；来源、场景、示例、风险和标签必须是字符串列表；状态必须是 `candidate`、`approved`、`testing`、`validated`、`rejected`、`deprecated` 之一；强度必须是 `weak`、`medium`、`strong` 之一；验证次数不能为负数。
 
-说明：`RuleCard` 缺少 `status` 时安全默认为 `candidate`。旧数据如果显式写了 `approved` 仍保持 `approved`。Codex 推导、对标分析、内容拆解、反馈推导和 workflow 生成的规则默认都是 `candidate`；只有结构化标记为 `explicit_user_rule`、`user_confirmed=true`，并保留用户决策证据时，才能直接保存为 `approved`。生成草稿时应优先参考 `validated` 或 `strong` 规则。
+说明：`RuleCard` 缺少 `status` 时安全默认为 `candidate`。旧数据如果显式写了 `approved` 仍保持 `approved`。Codex 推导、对标分析、内容拆解、反馈推导和 workflow 生成的规则默认都是 `candidate`；只有结构化标记为 `explicit_user_rule`、`user_confirmed=true`，并保留用户决策证据时，才能直接保存为 `approved`。正式生成默认只读取 `approved`、`testing`、`validated` 规则；`candidate`、`rejected`、`deprecated` 不进入选题、草稿或复盘 prompt 上下文。
 
 ## RuleEvidence
 
@@ -134,6 +134,8 @@
 基础校验：目标对象、来源对象和方法不能为空；`target_object_type` 和 `source_object_type` 使用统一业务对象类型，例如 `creator_profile`、`rule_card`、`content_draft`、`benchmark_analysis`；`actor` 必须是 `user`、`codex`、`system`、`migration`、`external_source` 之一；`artifact_nature` 必须是 `fact`、`derived`、`inference`、`generated`、`recommendation`、`decision` 之一。
 
 说明：`actor` 和 `artifact_nature` 必须分开。例如 Codex 可以产生 `inference`，但不能把它写成用户确认的事实。
+
+业务代码保存 `ProvenanceRecord` 必须使用 `save_provenance_record()`，不要直接调用 `JsonRepository.upsert()`。该 helper 会校验 target/source/source_version 是否存在，避免来源记录绕过完整性检查。
 
 ## DecisionRequest
 

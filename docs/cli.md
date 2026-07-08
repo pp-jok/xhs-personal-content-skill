@@ -231,6 +231,24 @@ python3 -m app.cli.main add-feedback \
 - `feedback_nature=content_specific_feedback`：只作为当前内容反馈，不自动提升为长期规则。
 - `feedback_nature=uncertain` 或缺失：采用安全默认，不自动 approved。
 
+显式用户长期规则会额外保存一条 user decision provenance，便于审计这条规则为什么可以直接进入 `approved`。
+
+## 生成规则使用范围
+
+正式生成默认只使用 active rules：
+
+- `approved`
+- `testing`
+- `validated`
+
+以下规则不会进入 `generate-topics`、`generate-draft` 或 `review-own-post` 的 prompt 上下文：
+
+- `candidate`
+- `rejected`
+- `deprecated`
+
+当前 CLI 暂未提供试用 candidate 的显式参数。需要试用候选规则时，应先让用户通过决策确认，或在后续实验模式中单独实现。
+
 ## 校验工作区
 
 ```bash

@@ -146,6 +146,8 @@ When recording feedback, do not infer long-term rules from words such as “长�
 - `content_specific_feedback`: keep it local to the current content; do not promote it to an approved long-term rule.
 - `uncertain` or missing nature: use the safe default and do not approve automatically.
 
+When `explicit_user_rule` is saved directly as approved, keep auditable user decision provenance. The evidence must show that approval came from structured user confirmation, not keyword matching or Codex inference.
+
 When the user says something is good or bad, turn it into an enduring preference:
 
 ```text
@@ -162,6 +164,8 @@ Prefer updating existing rules over creating duplicates. Always preserve the use
 When generating topics, drafts, or tasks, ground the output in accumulated account context:
 
 - Mention which account preference or rule influenced the result.
+- Use only active rules by default: `approved`, `testing`, and `validated`.
+- Do not use `candidate`, `rejected`, or `deprecated` rules in formal generation. Candidate rules stay under `【需要你决定】` until confirmed.
 - Avoid generic content advice.
 - If context is insufficient, say what kind of sample would improve the next round.
 - Do not describe the output as coming from mock or internal services in normal conversation.

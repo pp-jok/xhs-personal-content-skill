@@ -5,7 +5,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -28,8 +28,59 @@ from app.models.core import (  # noqa: E402
     ProvenanceRecord,
     RuleCard,
     RuleEvidence,
+    TopicItem,
 )
 from app.repositories import JsonRepository  # noqa: E402
+
+
+class RecordingPromptService:
+    def __init__(self) -> None:
+        self.payloads: dict[str, list[dict[str, Any]]] = {}
+
+    def run(self, contract_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self.payloads.setdefault(contract_id, []).append(payload)
+        if contract_id == "generate_topic_pool":
+            return {
+                "topics": [
+                    {
+                        "title": "测试选题",
+                        "content_goal": "提升收藏",
+                        "content_format": "图文",
+                        "source_rule_cards": [item["id"] for item in payload["rule_cards"]],
+                        "reference_posts": [payload["reference_posts"][0]["id"]],
+                        "reason": "测试。",
+                        "tags": [],
+                    }
+                ],
+                "warnings": [],
+            }
+        if contract_id == "generate_content_draft":
+            return {
+                "draft": {
+                    "topic_id": payload["topic"]["id"],
+                    "titles": ["测试标题"],
+                    "cover_titles": ["测试封面"],
+                    "script": "测试脚本。",
+                    "shot_suggestions": ["测试镜头"],
+                    "quality_review": {},
+                    "tags": [],
+                },
+                "warnings": [],
+            }
+        if contract_id == "review_own_post":
+            return {
+                "review_record": {
+                    "own_post_id": payload["own_post"]["id"],
+                    "performance_summary": "测试复盘。",
+                    "lessons": ["测试经验"],
+                    "next_actions": ["测试行动"],
+                    "rule_updates": [
+                        {"rule_card_id": item["id"], "suggestion": "测试更新。"} for item in payload["related_rule_cards"]
+                    ],
+                },
+                "warnings": [],
+            }
+        raise AssertionError(f"Unexpected contract_id: {contract_id}")
 
 
 class CliTests(unittest.TestCase):
@@ -841,6 +892,89 @@ class CliTests(unittest.TestCase):
             self.assertEqual(system_context["result"]["sections"]["【已由你决定】"], [])
             self.assertIn("当前状态：approved", "\n".join(system_context["result"]["sections"]["【规则状态】"]))
 
+    def test_user_context_reports_conflict_when_rule_status_disagrees_with_user_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            for rule_id, status in (("rule-approved-user-rejected", "approved"), ("rule-rejected-user-confirmed", "rejected")):
+                JsonRepository(workspace, RuleCard).upsert(
+                    RuleCard(
+                        id=rule_id,
+                        name=rule_id,
+                        type="title",
+                        source_ids=["analysis-001"],
+                        applicable_scenarios=["标题"],
+                        rule_summary="规则。",
+                        examples=["例子"],
+                        risks=["风险"],
+                        adaptation_notes="适合账号。",
+                        status=status,
+                    )
+                )
+            JsonRepository(workspace, DecisionRequest).upsert(
+                DecisionRequest(
+                    id="decision-user-rejected-approved-rule",
+                    target_object_type="rule_card",
+                    target_object_id="rule-approved-user-rejected",
+                    question="是否确认？",
+                    options=["confirm", "reject"],
+                    option_outcomes={"confirm": "confirmed", "reject": "rejected"},
+                    recommendation="reject",
+                    recommendation_reason="测试。",
+                    impact="测试。",
+                    status="rejected",
+                    selected_option="reject",
+                    resolved_at="2026-07-08T00:00:00Z",
+                    resolved_by="user",
+                    created_by="codex",
+                )
+            )
+            JsonRepository(workspace, DecisionRequest).upsert(
+                DecisionRequest(
+                    id="decision-user-confirmed-rejected-rule",
+                    target_object_type="rule_card",
+                    target_object_id="rule-rejected-user-confirmed",
+                    question="是否确认？",
+                    options=["confirm", "reject"],
+                    option_outcomes={"confirm": "confirmed", "reject": "rejected"},
+                    recommendation="confirm",
+                    recommendation_reason="测试。",
+                    impact="测试。",
+                    status="confirmed",
+                    selected_option="confirm",
+                    resolved_at="2026-07-08T00:00:00Z",
+                    resolved_by="user",
+                    created_by="codex",
+                )
+            )
+
+            approved_context = self._run_cli(
+                [
+                    "show-user-context",
+                    "--workspace",
+                    temp_dir,
+                    "--collection",
+                    "rule-cards",
+                    "--record-id",
+                    "rule-approved-user-rejected",
+                ]
+            )
+            rejected_context = self._run_cli(
+                [
+                    "show-user-context",
+                    "--workspace",
+                    temp_dir,
+                    "--collection",
+                    "rule-cards",
+                    "--record-id",
+                    "rule-rejected-user-confirmed",
+                ]
+            )
+
+            for context in (approved_context, rejected_context):
+                sections = context["result"]["sections"]
+                self.assertEqual(sections["【已由你决定】"], [])
+                self.assertIn("当前规则状态与用户历史决定不一致。", sections["【信息不足】"])
+
     def test_add_feedback_uses_structured_feedback_nature_instead_of_keywords(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             feedback_file = Path(temp_dir) / "feedback.json"
@@ -898,6 +1032,68 @@ class CliTests(unittest.TestCase):
             resolved = [item for item in decisions if item.target_object_id == "feedback-rule-title-2"][0]
             self.assertEqual(resolved.status, "confirmed")
             self.assertEqual(resolved.resolved_by, "user")
+
+    def test_explicit_user_rule_creates_auditable_user_decision_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            feedback_file = Path(temp_dir) / "feedback.json"
+            feedback_file.write_text(
+                json.dumps(
+                    {
+                        "issues": [
+                            {
+                                "step": "title",
+                                "problem": "标题不要承诺无法证明的结果。",
+                                "suggestion": "长期避开夸张承诺。",
+                                "feedback_nature": "explicit_user_rule",
+                                "user_confirmed": True,
+                            },
+                            {
+                                "step": "cover",
+                                "problem": "封面太 AI。",
+                                "suggestion": "更口语。",
+                                "feedback_nature": "inferred_preference",
+                            },
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            output = self._run_cli(["add-feedback", "--workspace", temp_dir, "--file", str(feedback_file)])
+            provenances = JsonRepository(Path(temp_dir), ProvenanceRecord).list_all()
+            explicit_provenance = [
+                item
+                for item in provenances
+                if item.target_object_id == "feedback-rule-title-1"
+                and item.actor == "user"
+                and item.artifact_nature == "decision"
+            ]
+            inferred_provenance = [
+                item
+                for item in provenances
+                if item.target_object_id == "feedback-rule-cover-2"
+                and item.actor == "user"
+                and item.artifact_nature == "decision"
+            ]
+            context = self._run_cli(
+                [
+                    "show-user-context",
+                    "--workspace",
+                    temp_dir,
+                    "--collection",
+                    "rule-cards",
+                    "--record-id",
+                    "feedback-rule-title-1",
+                ]
+            )
+
+            self.assertTrue(output["ok"])
+            self.assertEqual(len(explicit_provenance), 1)
+            self.assertEqual(explicit_provenance[0].method, "explicit-user-rule-input")
+            self.assertIn("标题不要承诺无法证明的结果", explicit_provenance[0].note)
+            self.assertEqual(inferred_provenance, [])
+            self.assertIn("规则当前状态：approved", "\n".join(context["result"]["sections"]["【已由你决定】"]))
 
     def test_add_custom_tags_merges_root_list_and_collection_records(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1023,6 +1219,93 @@ class CliTests(unittest.TestCase):
                 save_provenance_record(workspace, bad_version)
 
             self.assertEqual(saved.id, "prov-helper-valid")
+
+    def test_generate_topics_passes_only_active_rules_to_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            for status in ("candidate", "approved", "testing", "validated", "rejected", "deprecated"):
+                self._seed_rule(data_dir, f"rule-{status}", status=status)
+            prompt_service = RecordingPromptService()
+
+            with patch("app.cli.main.build_prompt_service", return_value=prompt_service):
+                output = self._run_cli(
+                    [
+                        "generate-topics",
+                        "--workspace",
+                        temp_dir,
+                        "--creator-id",
+                        "creator-main",
+                        "--benchmark-post-id",
+                        "benchmark-post-001",
+                    ]
+                )
+
+            payload = prompt_service.payloads["generate_topic_pool"][0]
+            self.assertTrue(output["ok"])
+            self.assertEqual(
+                [rule["id"] for rule in payload["rule_cards"]],
+                ["rule-approved", "rule-testing", "rule-validated"],
+            )
+
+    def test_generate_draft_passes_only_active_rules_to_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            JsonRepository(data_dir, TopicItem).create(
+                TopicItem(
+                    id="topic-001",
+                    title="测试选题",
+                    content_goal="提升收藏",
+                    content_format="图文",
+                    source_rule_cards=[],
+                    reference_posts=["benchmark-post-001"],
+                    reason="测试。",
+                )
+            )
+            for status in ("candidate", "approved", "testing", "validated", "rejected", "deprecated"):
+                self._seed_rule(data_dir, f"rule-{status}", status=status)
+            prompt_service = RecordingPromptService()
+
+            with patch("app.cli.main.build_prompt_service", return_value=prompt_service):
+                output = self._run_cli(["generate-draft", "--workspace", temp_dir, "--topic-id", "topic-001"])
+
+            payload = prompt_service.payloads["generate_content_draft"][0]
+            self.assertTrue(output["ok"])
+            self.assertEqual(
+                [rule["id"] for rule in payload["rule_cards"]],
+                ["rule-approved", "rule-testing", "rule-validated"],
+            )
+
+    def test_review_own_post_passes_only_active_rules_to_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            JsonRepository(data_dir, OwnPost).create(
+                OwnPost(
+                    id="own-post-001",
+                    account_id="creator-main",
+                    title="测试已发布内容",
+                    content_type="图文",
+                    published_at="2026-07-04T20:00:00+08:00",
+                    metrics={"likes": 10, "comments": 2, "saves": 5},
+                    tags=[],
+                    source_topic_id="topic-001",
+                )
+            )
+            for status in ("candidate", "approved", "testing", "validated", "rejected", "deprecated"):
+                self._seed_rule(data_dir, f"rule-{status}", status=status)
+            prompt_service = RecordingPromptService()
+
+            with patch("app.cli.main.build_prompt_service", return_value=prompt_service):
+                output = self._run_cli(["review-own-post", "--workspace", temp_dir, "--own-post-id", "own-post-001"])
+
+            payload = prompt_service.payloads["review_own_post"][0]
+            self.assertTrue(output["ok"])
+            self.assertEqual(
+                [rule["id"] for rule in payload["related_rule_cards"]],
+                ["rule-approved", "rule-testing", "rule-validated"],
+            )
 
     def test_generation_commands_create_rule_topic_draft_publish_task_and_review(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1684,6 +1967,7 @@ class CliTests(unittest.TestCase):
         rule_id: str,
         summary: str = "标题要包含具体对象",
         scenarios: Optional[list[str]] = None,
+        status: str = "approved",
     ) -> RuleCard:
         rule = RuleCard(
             id=rule_id,
@@ -1695,6 +1979,7 @@ class CliTests(unittest.TestCase):
             examples=["给职场新人看的表达模板"],
             risks=["对象过宽会变泛。"],
             adaptation_notes="适合当前账号的新手表达内容。",
+            status=status,
         )
         JsonRepository(data_dir, RuleCard).create(rule)
         return rule

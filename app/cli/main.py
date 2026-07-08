@@ -37,7 +37,7 @@ from app.models.core import (
 )
 from app.repositories import VERSIONED_COLLECTIONS, JsonRepository
 from app.quality import build_quality_report
-from app.rules import build_rule_and_evidence_from_analysis, check_rule_relations
+from app.rules import build_rule_and_evidence_from_analysis, check_rule_relations, select_active_rule_cards
 from app.services.mock_prompt_service import MockPromptService
 from app.services.prompt_contracts import load_contracts
 from app.services.real_sample_validation import RealSampleValidator
@@ -888,19 +888,23 @@ def handle_generate_topics(args: argparse.Namespace) -> dict[str, Any]:
     if not rule_cards:
         generated = handle_generate_rule_cards(args)
         rule_cards = [rule_repo.read(rule_id) for rule_id in generated["rule_card_ids"]]
+    active_rule_cards = select_active_rule_cards(rule_cards)
 
     topic_payload = build_prompt_service(args.prompts_dir).run(
         "generate_topic_pool",
         {
             "creator_profile": creator.to_dict(),
             "custom_tags": [tag.to_dict() for tag in tags],
-            "rule_cards": [rule.to_dict() for rule in rule_cards],
+            "rule_cards": [rule.to_dict() for rule in active_rule_cards],
             "reference_posts": [post.to_dict()],
             "topic_count": args.topic_count,
         },
     )
     saved = save_topics(workspace, post.id, topic_payload["topics"])
-    return {"topic_ids": [topic.id for topic in saved], "warnings": topic_payload.get("warnings", [])}
+    warnings = list(topic_payload.get("warnings", []))
+    if rule_cards and not active_rule_cards:
+        warnings.append("存在未确认候选规则，已从正式选题生成上下文中排除。")
+    return {"topic_ids": [topic.id for topic in saved], "warnings": warnings}
 
 
 def handle_generate_draft(args: argparse.Namespace) -> dict[str, Any]:
@@ -909,7 +913,7 @@ def handle_generate_draft(args: argparse.Namespace) -> dict[str, Any]:
     topic = JsonRepository(workspace, TopicItem).read(args.topic_id)
     creator = first_record(workspace, CreatorProfile)
     tags = JsonRepository(workspace, CustomTag).list_all()
-    rule_cards = JsonRepository(workspace, RuleCard).list_all()
+    rule_cards = select_active_rule_cards(JsonRepository(workspace, RuleCard).list_all())
     draft_payload = build_prompt_service(args.prompts_dir).run(
         "generate_content_draft",
         {
@@ -945,7 +949,7 @@ def handle_review_own_post(args: argparse.Namespace) -> dict[str, Any]:
     ensure_workspace_dirs(workspace)
     own_post_repo = JsonRepository(workspace, OwnPost)
     own_post = own_post_repo.read(args.own_post_id)
-    rule_cards = JsonRepository(workspace, RuleCard).list_all()
+    rule_cards = select_active_rule_cards(JsonRepository(workspace, RuleCard).list_all())
     review_payload = build_prompt_service(args.prompts_dir).run(
         "review_own_post",
         {
@@ -1249,17 +1253,20 @@ def build_user_context_sections(
     if isinstance(item, RuleCard):
         sections["【规则约束】"].append(item.rule_summary)
         has_pending_decision = any(decision.status == "pending" for decision in decisions)
+        user_decision_state = get_user_decision_state_for_rule(item, decisions, provenance)
+        if user_decision_state == "conflicting":
+            sections["【信息不足】"].append("当前规则状态与用户历史决定不一致。")
         if item.status == "candidate" and not has_pending_decision:
             sections["【需要你决定】"].append("候选规则，需要确认后才会长期生效。")
         elif item.status in {"approved", "testing", "validated"}:
-            if has_user_confirmation(provenance, decisions):
+            if user_decision_state == "confirmed":
                 sections["【已由你决定】"].append(f"规则当前状态：{item.status}")
-            else:
+            elif user_decision_state != "conflicting":
                 sections["【规则状态】"].append(f"当前状态：{item.status}")
         elif item.status in {"rejected", "deprecated"}:
-            if has_user_confirmation(provenance, decisions):
+            if user_decision_state in {"rejected", "cancelled", "superseded"}:
                 sections["【已由你决定】"].append(f"这条规则已标记为：{item.status}")
-            else:
+            elif user_decision_state != "conflicting":
                 sections["【规则状态】"].append(f"当前状态：{item.status}")
 
     for record in provenance:
@@ -1273,19 +1280,49 @@ def build_user_context_sections(
     for decision in decisions:
         if decision.status == "pending":
             sections["【需要你决定】"].append(decision.question)
-        elif decision.status in {"confirmed", "rejected", "cancelled"} and decision.resolved_by == "user":
+        elif (
+            decision.status in {"confirmed", "rejected", "cancelled", "superseded"}
+            and decision.resolved_by == "user"
+            and not (isinstance(item, RuleCard) and not decision_matches_rule_status(item.status, decision.status))
+        ):
             sections["【已由你决定】"].append(f"{decision.question} -> {decision.selected_option}")
 
     return sections
 
 
-def has_user_confirmation(provenance: list[ProvenanceRecord], decisions: list[DecisionRequest]) -> bool:
-    if any(decision.status in {"confirmed", "rejected"} and decision.resolved_by == "user" for decision in decisions):
-        return True
-    return any(
-        record.actor == "user" and record.artifact_nature == "decision"
-        for record in provenance
-    )
+def get_user_decision_state_for_rule(
+    rule: RuleCard,
+    decisions: list[DecisionRequest],
+    provenance: list[ProvenanceRecord],
+) -> str:
+    user_decisions = [
+        decision.status
+        for decision in decisions
+        if decision.resolved_by == "user" and decision.status in {"confirmed", "rejected", "cancelled", "superseded"}
+    ]
+    if user_decisions:
+        if any(decision_matches_rule_status(rule.status, status) for status in user_decisions):
+            for status in user_decisions:
+                if decision_matches_rule_status(rule.status, status):
+                    return status
+        return "conflicting"
+    if rule.status in {"approved", "testing", "validated"} and any(
+        record.actor == "user" and record.artifact_nature == "decision" for record in provenance
+    ):
+        return "confirmed"
+    return "none"
+
+
+def decision_matches_rule_status(rule_status: str, decision_status: str) -> bool:
+    if rule_status in {"approved", "testing", "validated"}:
+        return decision_status == "confirmed"
+    if rule_status == "rejected":
+        return decision_status == "rejected"
+    if rule_status == "deprecated":
+        return decision_status in {"cancelled", "superseded"}
+    if rule_status == "candidate":
+        return decision_status == "pending"
+    return False
 
 
 def collect_provenance_for_object(
@@ -1341,13 +1378,13 @@ def save_rule_cards(workspace: Path, post_id: str, rule_cards: list[dict[str, An
 def enforce_rule_safety_defaults(rule_data: dict[str, Any]) -> dict[str, Any]:
     data = dict(rule_data)
     created_by = data.get("created_by") or "codex"
-    has_user_confirmation = (
+    has_structured_user_confirmation = (
         created_by == "user"
         and data.get("feedback_nature") == "explicit_user_rule"
         and data.get("user_confirmed") is True
     )
     data["created_by"] = created_by
-    if not has_user_confirmation:
+    if not has_structured_user_confirmation:
         data["status"] = "candidate"
         if created_by != "user":
             data["created_by"] = "codex"
@@ -1425,7 +1462,7 @@ def create_feedback_rule_cards(workspace: Path, issues: list[Any]) -> list[str]:
         )
         saved = repo.upsert(rule, changed_by=created_by, change_note="add-feedback")
         if explicit_instruction:
-            create_feedback_confirmation_decision(workspace, saved, step)
+            create_feedback_confirmation_decision(workspace, saved, step, problem, suggestion)
         elif feedback_nature in {"inferred_preference", "candidate_rule", "uncertain", ""}:
             create_feedback_candidate_decision(workspace, saved, step)
         saved_ids.append(rule.id)
@@ -1461,7 +1498,13 @@ def create_feedback_candidate_decision(workspace: Path, rule: RuleCard, step: st
     )
 
 
-def create_feedback_confirmation_decision(workspace: Path, rule: RuleCard, step: str) -> DecisionRequest:
+def create_feedback_confirmation_decision(
+    workspace: Path,
+    rule: RuleCard,
+    step: str,
+    problem: str,
+    suggestion: str,
+) -> DecisionRequest:
     decision = DecisionRequest(
         id=build_decision_id(workspace, "rule_card", rule.id, "是否将这条反馈作为长期规则？"),
         target_object_type="rule_card",
@@ -1482,11 +1525,32 @@ def create_feedback_confirmation_decision(workspace: Path, rule: RuleCard, step:
         source_note=step,
         created_from="add-feedback",
     )
-    return JsonRepository(workspace, DecisionRequest).upsert(
+    saved_decision = JsonRepository(workspace, DecisionRequest).upsert(
         decision,
         changed_by="user",
         change_note="add-feedback explicit user rule decision",
     )
+    provenance_note = f"step={step}; problem={problem}; suggestion={suggestion}".strip()
+    save_provenance_record(
+        workspace,
+        ProvenanceRecord(
+            id=f"provenance-explicit-user-rule-{rule.id}",
+            target_object_type="rule_card",
+            target_object_id=rule.id,
+            source_object_type="rule_card",
+            source_object_id=rule.id,
+            source_version=rule.version,
+            actor="user",
+            artifact_nature="decision",
+            method="explicit-user-rule-input",
+            note=provenance_note,
+            created_by="system",
+            source_type="user_feedback",
+            source_note=step,
+            created_from="add-feedback",
+        ),
+    )
+    return saved_decision
 
 
 def feedback_step_to_rule_type(step: str) -> str:
