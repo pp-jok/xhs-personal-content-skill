@@ -1740,7 +1740,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("inference", analysis.title_analysis)
             self.assertIn("metrics.comments", analysis.uncertainties)
             outcome = output["result"]["analysis_outcome"]
-            self.assertEqual(outcome["status_category"], "partial")
+            self.assertEqual(outcome["status_category"], "complete")
             self.assertIn("【客观数据】", outcome["user_summary"])
             self.assertIn("【Codex 判断】", outcome["user_summary"])
             self.assertIn("【信息不足】", outcome["user_summary"])

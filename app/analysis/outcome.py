@@ -26,6 +26,47 @@ MISSING_FIELD_LABELS = {
     "comments": "没有评论正文，无法分析用户反馈和异议",
 }
 
+ANALYSIS_DIMENSIONS = (
+    ("选题", "topic_analysis", "topic"),
+    ("标题", "title_analysis", "title"),
+    ("正文结构", "structure_analysis", "structure"),
+    ("封面与图片", "cover_analysis", "cover"),
+    ("视频与视觉", "visual_analysis", "video"),
+    ("音频与字幕", "audio_analysis", "audio"),
+    ("评论", "comment_analysis", "comments"),
+    ("互动表现", "engagement_analysis", "engagement"),
+)
+
+FOCUS_DIMENSION_ALIASES = {
+    "title": "title",
+    "标题": "title",
+    "标题角度": "title",
+    "标题结构": "title",
+    "structure": "structure",
+    "正文": "structure",
+    "正文结构": "structure",
+    "内容结构": "structure",
+    "cover": "cover",
+    "image": "cover",
+    "封面": "cover",
+    "封面表达": "cover",
+    "visual": "video",
+    "视觉": "video",
+    "video": "video",
+    "视频": "video",
+    "镜头": "video",
+    "comments": "comments",
+    "comment": "comments",
+    "评论": "comments",
+    "engagement": "engagement",
+    "metrics": "engagement",
+    "互动": "engagement",
+    "数据表现": "engagement",
+}
+
+DIMENSION_LABEL_BY_KEY = {key: label for label, _, key in ANALYSIS_DIMENSIONS}
+LIMITATION_MARKERS = ("无法", "不能", "不确定", "缺少", "没有", "只", "仅", "需要", "保持不确定", "不判断", "PR-3A")
+
 
 def build_analysis_outcome(
     capture: CaptureRecord,
@@ -35,8 +76,8 @@ def build_analysis_outcome(
     observed_facts = build_observed_facts(capture)
     information_gaps = build_information_gaps(capture)
     dimension_limitations = build_dimension_limitations(capture)
-    analysis_judgments = build_analysis_judgments(capture)
-    status_category = choose_status_category(capture, analysis_judgments, information_gaps, requested_focus or [])
+    analysis_judgments = build_analysis_judgments(capture=capture, analysis=analysis)
+    status_category = choose_status_category(analysis_judgments, requested_focus or [])
     decision_readiness = build_decision_readiness(capture, status_category, dimension_limitations)
     return {
         "status_category": status_category,
@@ -92,52 +133,27 @@ def build_observed_facts(capture: CaptureRecord) -> list[dict[str, Any]]:
     return facts
 
 
-def build_analysis_judgments(capture: CaptureRecord) -> list[dict[str, Any]]:
+def build_analysis_judgments(capture: CaptureRecord, analysis: BenchmarkAnalysis) -> list[dict[str, Any]]:
     judgments: list[dict[str, Any]] = []
-    if capture.title:
-        title_judgment = "标题围绕具体对象或问题展开。"
-        if any(token in capture.title for token in ("如何", "区别", "方法", "新手", "为什么")):
-            title_judgment = "标题包含明确问题或对象，具备进入内容的理由。"
+    for label, field_name, evidence_key in ANALYSIS_DIMENSIONS:
+        analysis_field = getattr(analysis, field_name)
+        if not isinstance(analysis_field, dict):
+            continue
+        inference = str(analysis_field.get("inference") or "").strip()
+        if not is_positive_inference(inference):
+            continue
+        evidence = evidence_for_dimension(capture, analysis_field.get("observable"), evidence_key)
+        if not evidence:
+            continue
         judgments.append(
             {
-                "dimension": "标题",
-                "judgment": title_judgment,
-                "evidence": [capture.title],
-                "confidence": "medium",
+                "dimension": label,
+                "judgment": inference,
+                "evidence": evidence,
+                "confidence": confidence_label(analysis.confidence),
             }
         )
-    if capture.body:
-        evidence = summarize_text(capture.body)
-        confidence = "medium" if len(capture.body) <= 120 else "low"
-        judgments.append(
-            {
-                "dimension": "正文结构",
-                "judgment": "正文可以有限判断为围绕问题和做法展开。" if capture.body else "",
-                "evidence": [evidence],
-                "confidence": confidence,
-            }
-        )
-    comments = visible_comment_texts(capture.comments)
-    if comments:
-        judgments.append(
-            {
-                "dimension": "评论",
-                "judgment": "可见评论可作为有限的用户需求线索，但不能代表全部评论观点。",
-                "evidence": comments[:3],
-                "confidence": "low",
-            }
-        )
-    metrics = visible_metric_values(capture.metrics)
-    if metrics:
-        judgments.append(
-            {
-                "dimension": "互动表现",
-                "judgment": "可见互动数据只能作为有限参考，不能解释为表现好坏或因果原因。",
-                "evidence": [format_metrics(metrics)],
-                "confidence": "low",
-            }
-        )
-    return [item for item in judgments if item["judgment"]]
+    return judgments
 
 
 def build_information_gaps(capture: CaptureRecord) -> list[str]:
@@ -230,22 +246,17 @@ def build_dimension_limitations(capture: CaptureRecord) -> list[dict[str, str]]:
 
 
 def choose_status_category(
-    capture: CaptureRecord,
     judgments: list[dict[str, Any]],
-    information_gaps: list[str],
     requested_focus: list[str],
 ) -> str:
-    has_core_text = bool(capture.title or capture.body)
-    if not has_core_text:
-        return "insufficient"
-    if not capture.title or not capture.body:
-        return "partial"
     if not judgments:
         return "insufficient"
-    focus_gaps = gaps_for_requested_focus(information_gaps, requested_focus)
-    if focus_gaps:
-        return "partial"
-    return "partial" if information_gaps or capture.capture_status != "success" else "complete"
+    required_dimensions = normalize_requested_focus(requested_focus) or ["title", "structure"]
+    fulfilled_dimensions = {dimension_key_for_label(item["dimension"]) for item in judgments}
+    fulfilled_required = [dimension for dimension in required_dimensions if dimension in fulfilled_dimensions]
+    if len(fulfilled_required) == len(required_dimensions):
+        return "complete"
+    return "partial" if fulfilled_required else "insufficient"
 
 
 def build_decision_readiness(
@@ -337,6 +348,119 @@ def summarize_text(text: str, limit: int = 120) -> str:
 
 def content_type_label(content_type: str) -> str:
     return {"image": "图文", "video": "视频", "mixed": "图文/视频"}.get(content_type, content_type)
+
+
+def evidence_for_dimension(capture: CaptureRecord, observable: Any, dimension: str) -> list[str]:
+    if dimension == "topic":
+        return compact_evidence([capture.title, summarize_text(capture.body) if capture.body else ""])
+    if dimension == "title":
+        return compact_evidence([capture.title])
+    if dimension == "structure":
+        return compact_evidence([summarize_text(capture.body) if capture.body else ""])
+    if dimension == "cover":
+        return image_content_evidence(capture, observable)
+    if dimension == "video":
+        return video_content_evidence(capture, observable)
+    if dimension == "audio":
+        return audio_content_evidence(capture, observable)
+    if dimension == "comments":
+        return visible_comment_texts(capture.comments)[:3]
+    if dimension == "engagement":
+        metrics = visible_metric_values(capture.metrics)
+        return [format_metrics(metrics)] if metrics else []
+    return observable_evidence(observable)
+
+
+def image_content_evidence(capture: CaptureRecord, observable: Any) -> list[str]:
+    evidence: list[str] = []
+    for image in capture.images:
+        for key in ("content_text", "ocr_text", "description", "visible_text"):
+            value = str(image.get(key) or "").strip()
+            if value:
+                evidence.append(value)
+    return evidence or observable_evidence_for_keys(observable, {"content_text", "ocr_text", "description", "visible_text"})
+
+
+def video_content_evidence(capture: CaptureRecord, observable: Any) -> list[str]:
+    evidence: list[str] = []
+    for key in ("keyframes", "subtitles", "visible_text", "description"):
+        value = capture.video.get(key)
+        if isinstance(value, list):
+            evidence.extend(str(item).strip() for item in value if str(item).strip())
+        elif value:
+            evidence.append(str(value).strip())
+    return evidence or observable_evidence_for_keys(observable, {"keyframes", "subtitles", "visible_text", "description"})
+
+
+def audio_content_evidence(capture: CaptureRecord, observable: Any) -> list[str]:
+    evidence: list[str] = []
+    for key in ("transcript", "audio_transcript", "subtitles"):
+        value = capture.video.get(key)
+        if value:
+            evidence.append(str(value).strip())
+    return evidence or observable_evidence_for_keys(observable, {"transcript", "audio_transcript", "subtitles"})
+
+
+def observable_evidence_for_keys(observable: Any, keys: set[str]) -> list[str]:
+    if not isinstance(observable, dict):
+        return []
+    evidence: list[str] = []
+    for key in keys:
+        value = observable.get(key)
+        if isinstance(value, list):
+            evidence.extend(str(item).strip() for item in value if str(item).strip())
+        elif value:
+            evidence.append(str(value).strip())
+    return evidence
+
+
+def observable_evidence(observable: Any) -> list[str]:
+    if isinstance(observable, str):
+        return compact_evidence([observable])
+    if isinstance(observable, dict):
+        return compact_evidence(str(value) for value in observable.values() if value)
+    if isinstance(observable, list):
+        return compact_evidence(str(value) for value in observable if value)
+    return []
+
+
+def compact_evidence(values: Any) -> list[str]:
+    evidence: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in evidence:
+            evidence.append(text)
+    return evidence
+
+
+def is_positive_inference(inference: str) -> bool:
+    if not inference:
+        return False
+    return not any(marker in inference for marker in LIMITATION_MARKERS)
+
+
+def confidence_label(confidence: float) -> str:
+    if confidence >= 0.8:
+        return "high"
+    if confidence >= 0.6:
+        return "medium"
+    return "low"
+
+
+def normalize_requested_focus(requested_focus: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for focus in requested_focus:
+        mapped = FOCUS_DIMENSION_ALIASES.get(focus.strip())
+        if mapped and mapped not in normalized:
+            normalized.append(mapped)
+    return normalized
+
+
+def dimension_key_for_label(label: str) -> str:
+    for dimension_label, _, key in ANALYSIS_DIMENSIONS:
+        if label == dimension_label:
+            return key
+    return ""
 
 
 def gaps_for_requested_focus(information_gaps: list[str], requested_focus: list[str]) -> list[str]:

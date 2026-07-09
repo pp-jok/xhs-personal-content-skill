@@ -7,7 +7,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.analysis.outcome import build_analysis_outcome  # noqa: E402
 from app.analysis import analyze_capture  # noqa: E402
-from app.models.core import CaptureRecord  # noqa: E402
+from app.models.core import BenchmarkAnalysis, CaptureRecord  # noqa: E402
 
 
 class AnalysisEvidenceOutcomeTests(unittest.TestCase):
@@ -31,7 +31,7 @@ class AnalysisEvidenceOutcomeTests(unittest.TestCase):
 
         outcome = build_analysis_outcome(capture, analysis)
 
-        self.assertEqual(outcome["status_category"], "partial")
+        self.assertEqual(outcome["status_category"], "complete")
         self.assertIn("【客观数据】", outcome["user_summary"])
         self.assertIn("【Codex 判断】", outcome["user_summary"])
         self.assertIn("【信息不足】", outcome["user_summary"])
@@ -151,6 +151,144 @@ class AnalysisEvidenceOutcomeTests(unittest.TestCase):
         self.assertEqual(outcome["status_category"], "partial")
         self.assertTrue(any(item["field"] == "正文" for item in outcome["observed_facts"]))
         self.assertIn("不是完整采集", outcome["user_summary"])
+
+    def test_requested_title_focus_is_complete_when_title_analysis_has_evidence(self) -> None:
+        capture = CaptureRecord(
+            id="capture-title-focus",
+            inbox_item_id="inbox-title-focus",
+            source_url="https://www.xiaohongshu.com/explore/title-focus",
+            capture_status="partial",
+            title="新手如何做清晰表达",
+            content_type="image",
+            metrics={"likes": None, "collects": None, "comments": None, "shares": None},
+            images=[{"path": "capture/image.jpg"}],
+            missing_fields=["image.content", "comments", "metrics.likes"],
+        )
+        analysis = analyze_capture(capture)
+
+        outcome = build_analysis_outcome(capture, analysis, requested_focus=["标题"])
+
+        self.assertEqual(outcome["status_category"], "complete")
+        self.assertTrue(any("图片" in gap for gap in outcome["information_gaps"]))
+        self.assertTrue(any("评论" in gap for gap in outcome["information_gaps"]))
+        self.assertTrue(any("互动" in gap for gap in outcome["information_gaps"]))
+
+    def test_requested_cover_focus_is_not_complete_without_image_content_evidence(self) -> None:
+        capture = CaptureRecord(
+            id="capture-cover-focus",
+            inbox_item_id="inbox-cover-focus",
+            source_url="https://www.xiaohongshu.com/explore/cover-focus",
+            capture_status="success",
+            title="表达能力提升方法",
+            body="正文可见。",
+            content_type="image",
+            images=[{"remote_url": "https://example.test/image.jpg", "path": "capture/image.jpg"}],
+            missing_fields=["image.content"],
+        )
+        analysis = analyze_capture(capture)
+
+        outcome = build_analysis_outcome(capture, analysis, requested_focus=["封面"])
+
+        self.assertNotEqual(outcome["status_category"], "complete")
+
+    def test_requested_title_and_structure_is_partial_when_body_is_missing(self) -> None:
+        capture = CaptureRecord(
+            id="capture-title-only",
+            inbox_item_id="inbox-title-only",
+            source_url="https://www.xiaohongshu.com/explore/title-only",
+            capture_status="partial",
+            title="新手如何做清晰表达",
+            content_type="image",
+            missing_fields=["body"],
+        )
+        analysis = analyze_capture(capture)
+
+        outcome = build_analysis_outcome(capture, analysis, requested_focus=["标题", "正文结构"])
+
+        self.assertEqual(outcome["status_category"], "partial")
+
+    def test_default_core_dimensions_are_complete_when_title_and_body_are_valid(self) -> None:
+        capture = CaptureRecord(
+            id="capture-default-complete",
+            inbox_item_id="inbox-default-complete",
+            source_url="https://www.xiaohongshu.com/explore/default-complete",
+            capture_status="partial",
+            title="新手如何做清晰表达",
+            body="先讲对象，再讲问题，最后给一个具体做法。",
+            content_type="image",
+            metrics={"likes": None, "collects": None, "comments": None, "shares": None},
+            images=[{"path": "capture/image.jpg"}],
+            missing_fields=["image.content", "comments", "metrics.likes"],
+        )
+        analysis = analyze_capture(capture)
+
+        outcome = build_analysis_outcome(capture, analysis)
+
+        self.assertEqual(outcome["status_category"], "complete")
+        self.assertTrue(outcome["information_gaps"])
+
+    def test_outcome_uses_saved_analysis_inference_without_creating_title_judgment(self) -> None:
+        capture = CaptureRecord(
+            id="capture-saved-analysis",
+            inbox_item_id="inbox-saved-analysis",
+            source_url="https://www.xiaohongshu.com/explore/saved-analysis",
+            capture_status="success",
+            title="新手如何做清晰表达",
+            body="先讲对象，再讲问题，最后给一个具体做法。",
+            content_type="image",
+        )
+        analysis = analyze_capture(capture)
+        analysis.title_analysis["inference"] = "这是来自已保存 BenchmarkAnalysis 的标题判断"
+
+        outcome = build_analysis_outcome(capture, analysis)
+
+        judgments = [item["judgment"] for item in outcome["analysis_judgments"] if item["dimension"] == "标题"]
+        self.assertEqual(judgments, ["这是来自已保存 BenchmarkAnalysis 的标题判断"])
+
+    def test_cover_inference_without_image_content_evidence_is_filtered(self) -> None:
+        capture = CaptureRecord(
+            id="capture-filter-cover",
+            inbox_item_id="inbox-filter-cover",
+            source_url="https://www.xiaohongshu.com/explore/filter-cover",
+            capture_status="success",
+            title="表达能力提升方法",
+            body="正文可见。",
+            content_type="image",
+            images=[{"remote_url": "https://example.test/image.jpg", "path": "capture/image.jpg"}],
+            missing_fields=["image.content"],
+        )
+        analysis = analyze_capture(capture)
+        analysis.cover_analysis["inference"] = "封面采用人物居中构图"
+
+        outcome = build_analysis_outcome(capture, analysis, requested_focus=["封面"])
+
+        self.assertFalse(any(item["judgment"] == "封面采用人物居中构图" for item in outcome["analysis_judgments"]))
+        self.assertTrue(any("图片内容证据" in gap for gap in outcome["information_gaps"]))
+
+    def test_user_summary_hides_account_fit_and_candidate_rule_ids(self) -> None:
+        capture = CaptureRecord(
+            id="capture-hidden-boundaries",
+            inbox_item_id="inbox-hidden-boundaries",
+            source_url="https://www.xiaohongshu.com/explore/hidden-boundaries",
+            capture_status="success",
+            title="新手如何做清晰表达",
+            body="先讲对象，再讲问题，最后给一个具体做法。",
+            content_type="image",
+        )
+        analysis = BenchmarkAnalysis(
+            id="analysis-hidden-boundaries",
+            capture_id=capture.id,
+            title_analysis={"observable": capture.title, "inference": "标题判断来自 analysis"},
+            structure_analysis={"observable": capture.body, "inference": "结构判断来自 analysis"},
+            account_fit={"inference": "适合你的账号"},
+            candidate_rule_ids=["candidate-rule-hidden"],
+        )
+
+        outcome = build_analysis_outcome(capture, analysis)
+
+        self.assertNotIn("account_fit", outcome["user_summary"])
+        self.assertNotIn("适合你的账号", outcome["user_summary"])
+        self.assertNotIn("candidate-rule-hidden", outcome["user_summary"])
 
 
 if __name__ == "__main__":
