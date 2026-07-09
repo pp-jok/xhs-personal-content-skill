@@ -298,6 +298,18 @@ python3 -m app.cli.main capture-xhs-link \
 
 该命令不会绕过登录、验证码、风控或访问限制。采集失败时会生成 `failed` 或 `partial` 采集记录，并保存诊断信息。
 
+命令结果会额外返回 `outcome`，供 CLI、Skill 对话层和后续分析复用。它把原始采集状态解释为稳定结构：
+
+- `status_category`：`success`、`partial` 或 `failed`。
+- `available_content`：已获取内容的普通用户说法。
+- `missing_content`：缺失内容的普通用户说法。
+- `limitations`：缺失内容会影响什么。
+- `recommended_action`：当前最小下一步动作。
+- `user_summary`：可直接用于普通对话的安全摘要。
+- `technical_details`：隔离的调试信息，普通用户摘要不读取。
+
+普通用户摘要不会展示 CDP、Playwright、Python 异常、本地路径、token、签名媒体 URL 或追踪查询参数。
+
 使用人工复制或截图转写内容时，保留为降级路径：
 
 ```bash

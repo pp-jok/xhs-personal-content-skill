@@ -10,6 +10,7 @@ from typing import Any, Sequence
 from app.analysis import analyze_capture
 from app.capture import build_browser_capture_record, build_capture_record
 from app.capture.browser.cdp_client import DEFAULT_CDP_URL, capture_xhs_link_with_browser
+from app.capture.outcome import build_capture_error_outcome, build_capture_outcome
 from app.models.core import (
     MODEL_TYPES,
     Actor,
@@ -75,7 +76,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result = args.handler(args)
     except Exception as exc:
-        print_json({"ok": False, "error": str(exc)})
+        payload: dict[str, Any] = {"ok": False, "error": str(exc)}
+        if getattr(args, "handler", None) is handle_capture_xhs_link:
+            payload["outcome"] = build_capture_error_outcome(
+                error_code="manual_file_invalid" if getattr(args, "manual_file", "") else "capture_failed",
+                error_message=str(exc),
+            )
+        print_json(payload)
         return 1
 
     print_json({"ok": True, "result": result})
@@ -625,13 +632,17 @@ def handle_capture_xhs_link(args: argparse.Namespace) -> dict[str, Any]:
         "capture_status": saved.capture_status,
         "missing_fields": saved.missing_fields,
         "warnings": saved.warnings,
+        "outcome": build_capture_outcome(saved),
     }
 
 
 def handle_show_capture_result(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
-    return JsonRepository(workspace, CaptureRecord).read(args.capture_id).to_dict()
+    record = JsonRepository(workspace, CaptureRecord).read(args.capture_id)
+    data = record.to_dict()
+    data["outcome"] = build_capture_outcome(record)
+    return data
 
 
 def handle_analyze_captured_post(args: argparse.Namespace) -> dict[str, Any]:

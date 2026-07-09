@@ -1616,6 +1616,88 @@ class CliTests(unittest.TestCase):
             self.assertEqual(item.status, "captured")
             self.assertEqual(item.content_type, "image")
 
+    def test_capture_xhs_link_returns_reusable_outcome_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manual_file = Path(temp_dir) / "manual-capture.json"
+            manual_file.write_text(
+                json.dumps(
+                    {
+                        "title": "可见标题",
+                        "body": "可见正文",
+                        "content_type": "image",
+                        "metrics": {"likes": None, "collects": None, "comments": None, "shares": None},
+                        "images": [{"path": "screenshot.png"}],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            inbox = self._run_cli(
+                [
+                    "add-inbox-item",
+                    "--workspace",
+                    temp_dir,
+                    "--url",
+                    "https://www.xiaohongshu.com/explore/test-note",
+                    "--user-intent",
+                    "学习结构",
+                ]
+            )
+
+            capture = self._run_cli(
+                [
+                    "capture-xhs-link",
+                    "--workspace",
+                    temp_dir,
+                    "--inbox-item-id",
+                    inbox["result"]["id"],
+                    "--manual-file",
+                    str(manual_file),
+                ]
+            )
+
+            self.assertIn("capture_status", capture["result"])
+            outcome = capture["result"]["outcome"]
+            self.assertEqual(outcome["status_category"], "partial")
+            self.assertIn("标题", outcome["available_content"])
+            self.assertIn("互动数据", outcome["missing_content"])
+            self.assertIn("下一步", outcome["user_summary"])
+
+    def test_capture_xhs_link_invalid_manual_file_returns_plain_outcome(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manual_file = Path(temp_dir) / "manual-capture.json"
+            manual_file.write_text("[]", encoding="utf-8")
+            inbox = self._run_cli(
+                [
+                    "add-inbox-item",
+                    "--workspace",
+                    temp_dir,
+                    "--url",
+                    "https://www.xiaohongshu.com/explore/test-note",
+                    "--user-intent",
+                    "学习结构",
+                ]
+            )
+
+            capture = self._run_cli(
+                [
+                    "capture-xhs-link",
+                    "--workspace",
+                    temp_dir,
+                    "--inbox-item-id",
+                    inbox["result"]["id"],
+                    "--manual-file",
+                    str(manual_file),
+                ],
+                expected_code=1,
+            )
+
+            self.assertFalse(capture["ok"])
+            outcome = capture["outcome"]
+            self.assertEqual(outcome["status_category"], "failed")
+            self.assertIn("复制标题和正文", outcome["recommended_action"])
+            self.assertNotIn("JSON", outcome["user_summary"])
+
     def test_analyze_captured_post_uses_image_template_and_separates_facts_from_inferences(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir)
