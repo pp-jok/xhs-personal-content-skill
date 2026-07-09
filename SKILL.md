@@ -124,7 +124,8 @@ When a user provides one Xiaohongshu link:
 2. Capture only user-visible or user-provided content. Prefer the approved `capture-xhs-link --cdp-url` browser path when a dedicated Chrome debug session is available.
 3. If title, body, media, metrics, author, or comments are not available, mark them as missing.
 4. Do not infer missing metrics, comments, media, or account facts from the link alone.
-5. Ask the user to provide a screenshot, copied text, or the reason they like the post when content is incomplete.
+5. When the capture command returns an `outcome`, use `outcome.user_summary` as the safe normal-user summary and keep `technical_details` hidden unless requested.
+6. Ask the user to provide a screenshot, copied text, or the reason they like the post when content is incomplete.
 
 Use this normal reply shape:
 
