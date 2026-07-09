@@ -97,7 +97,7 @@ def labels_from_fields(fields: list[str], record: CaptureRecord | None = None) -
     labels: list[str] = []
     for field in fields:
         label = label_for_field(field)
-        if label not in labels:
+        if label is not None and label not in labels:
             labels.append(label)
     if record is not None:
         inferred = infer_available_labels(record)
@@ -128,10 +128,10 @@ def infer_available_labels(record: CaptureRecord) -> list[str]:
     return labels
 
 
-def label_for_field(field: str) -> str:
+def label_for_field(field: str) -> str | None:
     if field in METRIC_FIELDS or field.startswith("metrics."):
         return "互动数据"
-    return FIELD_LABELS.get(field, field)
+    return FIELD_LABELS.get(field)
 
 
 def build_limitations(missing_fields: list[str]) -> list[str]:

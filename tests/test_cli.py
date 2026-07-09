@@ -1698,6 +1698,32 @@ class CliTests(unittest.TestCase):
             self.assertIn("复制标题和正文", outcome["recommended_action"])
             self.assertNotIn("JSON", outcome["user_summary"])
 
+    def test_capture_xhs_link_missing_inbox_with_manual_file_is_not_manual_file_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manual_file = Path(temp_dir) / "manual-capture.json"
+            manual_file.write_text(
+                json.dumps({"title": "可见标题", "body": "可见正文"}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            capture = self._run_cli(
+                [
+                    "capture-xhs-link",
+                    "--workspace",
+                    temp_dir,
+                    "--inbox-item-id",
+                    "missing-inbox",
+                    "--manual-file",
+                    str(manual_file),
+                ],
+                expected_code=1,
+            )
+
+            self.assertFalse(capture["ok"])
+            outcome = capture["outcome"]
+            self.assertNotEqual(outcome["technical_details"]["error_code"], "manual_file_invalid")
+            self.assertNotIn("重新提供一份可读取的手动内容", outcome["recommended_action"])
+
     def test_analyze_captured_post_uses_image_template_and_separates_facts_from_inferences(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir)

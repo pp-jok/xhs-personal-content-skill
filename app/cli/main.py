@@ -10,6 +10,7 @@ from typing import Any, Sequence
 from app.analysis import analyze_capture
 from app.capture import build_browser_capture_record, build_capture_record
 from app.capture.browser.cdp_client import DEFAULT_CDP_URL, capture_xhs_link_with_browser
+from app.capture.capture_errors import CaptureInputError
 from app.capture.outcome import build_capture_error_outcome, build_capture_outcome
 from app.models.core import (
     MODEL_TYPES,
@@ -79,7 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         payload: dict[str, Any] = {"ok": False, "error": str(exc)}
         if getattr(args, "handler", None) is handle_capture_xhs_link:
             payload["outcome"] = build_capture_error_outcome(
-                error_code="manual_file_invalid" if getattr(args, "manual_file", "") else "capture_failed",
+                error_code="manual_file_invalid" if isinstance(exc, CaptureInputError) else "capture_failed",
                 error_message=str(exc),
             )
         print_json(payload)
@@ -603,8 +604,11 @@ def handle_capture_xhs_link(args: argparse.Namespace) -> dict[str, Any]:
     capture_repo = JsonRepository(workspace, CaptureRecord)
     inbox_item = inbox_repo.update(args.inbox_item_id, {"status": "capturing"})
     if args.manual_file:
-        manual_data = read_json_object(Path(args.manual_file), "manual capture")
-        capture = build_capture_record(inbox_item, manual_data)
+        try:
+            manual_data = read_json_object(Path(args.manual_file), "manual capture")
+            capture = build_capture_record(inbox_item, manual_data)
+        except (OSError, ValueError) as exc:
+            raise CaptureInputError(str(exc)) from exc
     else:
         capture_id = f"capture-from-{inbox_item.id}"
         browser_result = capture_xhs_link_with_browser(

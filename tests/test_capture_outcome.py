@@ -171,6 +171,27 @@ class CaptureOutcomeTests(unittest.TestCase):
         self.assertEqual(outcome["recommended_action"], "复制标题和正文，或重新提供一份可读取的手动内容。")
         self.assertNotIn("JSON", outcome["user_summary"])
 
+    def test_unknown_fields_do_not_enter_user_facing_summary(self) -> None:
+        record = CaptureRecord(
+            id="capture-internal-fields",
+            inbox_item_id="inbox-internal-fields",
+            source_url="https://www.xiaohongshu.com/explore/internal",
+            capture_method="browser_authorized",
+            capture_status="partial",
+            title="可见标题",
+            content_type="unknown",
+            available_fields=["title", "raw_snapshot_path", "internal_selector", "source_url"],
+            missing_fields=["body", "raw_snapshot_path", "internal_selector", "source_url"],
+        )
+
+        outcome = build_capture_outcome(record)
+
+        for internal_field in ("raw_snapshot_path", "internal_selector", "source_url"):
+            self.assertNotIn(internal_field, outcome["available_content"])
+            self.assertNotIn(internal_field, outcome["missing_content"])
+            self.assertNotIn(internal_field, outcome["user_summary"])
+        self.assertEqual(outcome["technical_details"]["missing_fields"], record.missing_fields)
+
 
 if __name__ == "__main__":
     unittest.main()
