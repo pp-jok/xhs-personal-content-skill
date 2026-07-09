@@ -386,9 +386,25 @@ python3 -m app.cli.main analyze-captured-post \
 - 可见信息进入 `observable_facts`。
 - 推断信息进入各分析字段的 `inference`。
 - 缺失字段进入 `uncertainties`。
+- 面向普通用户的证据优先说明进入 `analysis_outcome`，其中包含：
+  - `status_category`：分析证据充分性，取值为 `complete`、`partial` 或 `insufficient`。
+  - `observed_facts`：只来自当前采集记录的可见事实。
+  - `analysis_judgments`：带证据和置信度的 Codex 判断。
+  - `information_gaps`：普通用户语言的信息缺口。
+  - `dimension_limitations`：缺失信息影响的分析维度。
+  - `decision_readiness`：当前证据是否足够进入“是否值得对标”的人工判断。
+  - `user_summary`：可直接给用户看的分层摘要。
 - 公开互动数据只作为表现参考，不能解释为确定原因。
 
-Phase 9 不做 OCR、音频转写、关键帧抽取或真实多媒体处理。
+分析边界：
+
+- 只有图片路径、链接、数量或替代文本时，只能确认图片结构，不能判断封面文案、构图、人物、产品、环境或色彩。
+- 只有视频结构或媒体信息时，只能确认视频存在，不能判断前几秒、镜头、字幕、音乐、语音或剪辑节奏。
+- 只有评论数量时，不能推断评论观点；只有评论正文时，才做有限需求线索判断。
+- `candidate_rule_ids` 仍保留在机器返回中，但不会进入 `user_summary`，也不会被描述为已确认规则。
+- PR-3A 不输出账号适配结论；账号适配判断留到后续阶段。
+
+本阶段不做 OCR、音频转写、关键帧抽取或真实多媒体处理。
 
 ## 提升为对标内容
 

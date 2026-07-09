@@ -7,7 +7,7 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Any, Sequence
 
-from app.analysis import analyze_capture
+from app.analysis import analyze_capture, build_analysis_outcome
 from app.capture import build_browser_capture_record, build_capture_record
 from app.capture.browser.cdp_client import DEFAULT_CDP_URL, capture_xhs_link_with_browser
 from app.capture.capture_errors import CaptureInputError
@@ -655,7 +655,8 @@ def handle_analyze_captured_post(args: argparse.Namespace) -> dict[str, Any]:
     capture = JsonRepository(workspace, CaptureRecord).read(args.capture_id)
     analysis = analyze_capture(capture)
     saved = JsonRepository(workspace, BenchmarkAnalysis).upsert(analysis)
-    JsonRepository(workspace, ContentInboxItem).update(
+    inbox_repo = JsonRepository(workspace, ContentInboxItem)
+    inbox_item = inbox_repo.update(
         capture.inbox_item_id,
         {
             "status": "analyzed",
@@ -663,12 +664,14 @@ def handle_analyze_captured_post(args: argparse.Namespace) -> dict[str, Any]:
             "confidence": saved.confidence,
         },
     )
+    analysis_outcome = build_analysis_outcome(capture, saved, requested_focus=inbox_item.requested_focus)
     return {
         "analysis_id": saved.id,
         "capture_id": saved.capture_id,
         "analysis_template": saved.analysis_template,
         "candidate_rule_ids": saved.candidate_rule_ids,
         "uncertainties": saved.uncertainties,
+        "analysis_outcome": analysis_outcome,
     }
 
 

@@ -19,6 +19,7 @@ def analyze_capture(capture: CaptureRecord) -> BenchmarkAnalysis:
     }
     title_has_result = any(token in capture.title for token in ("如何", "区别", "方法", "结果", "新手"))
     has_comments = bool(capture.comments)
+    has_comment_text = any(str(comment.get("content") or comment.get("text") or "").strip() for comment in capture.comments)
     candidate_rule_id = f"candidate-rule-from-{capture.id}-1"
 
     return BenchmarkAnalysis(
@@ -39,34 +40,39 @@ def analyze_capture(capture: CaptureRecord) -> BenchmarkAnalysis:
             "risk": "不能仅凭标题判断互动表现原因。",
         },
         cover_analysis={
-            "observable": [image.get("alt", "") for image in capture.images],
-            "inference": "图文首图可能承担点击理由。" if capture.images else "缺少图片，无法判断封面。",
+            "observable": {"image_count": len(capture.images)},
+            "inference": "只有图片结构证据，不能判断封面文案、构图或视觉风格。"
+            if capture.images
+            else "缺少图片，无法判断封面。",
         },
         structure_analysis={
             "observable": capture.body,
             "inference": "结构接近“对象/问题/做法”。" if capture.body else "正文不足，无法判断结构。",
         },
         visual_analysis={
-            "observable": capture.images or capture.video,
-            "inference": "需要结合图片序列或视频关键帧进一步判断。",
+            "observable": {
+                "image_count": len(capture.images),
+                "has_video_structure": bool(capture.video),
+            },
+            "inference": "当前只能确认媒体结构；没有图片内容、视频关键帧或字幕时，不判断视觉语义。",
         },
         audio_analysis={
-            "observable": capture.video,
-            "inference": "Phase 9 不做音频转写，音频判断保持不确定。" if capture.content_type == "video" else "非视频内容，无音频分析。",
+            "observable": {"has_video_structure": bool(capture.video)},
+            "inference": "没有音频或字幕转写，音频判断保持不确定。" if capture.content_type == "video" else "非视频内容，无音频分析。",
         },
         comment_analysis={
             "observable": capture.comments,
-            "inference": "评论可作为真实需求线索。" if has_comments else "缺少评论，无法判断用户异议和衍生需求。",
+            "inference": "可见评论正文可作为有限需求线索。"
+            if has_comment_text
+            else "缺少评论正文，无法判断用户异议和衍生需求。",
         },
         engagement_analysis={
             "observable": capture.metrics,
             "inference": "公开互动数据只能作为表现参考，不能解释为确定原因。",
         },
         account_fit={
-            "observable": {
-                "requested_focus": capture.available_fields,
-            },
-            "inference": "需要结合账号档案判断是否适配。",
+            "observable": {},
+            "inference": "PR-3A 不判断账号适配。",
         },
         transferable_elements=[
             item
