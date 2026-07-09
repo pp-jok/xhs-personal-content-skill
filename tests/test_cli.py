@@ -1739,6 +1739,13 @@ class CliTests(unittest.TestCase):
             self.assertEqual(analysis.observable_facts["title"], capture.title)
             self.assertIn("inference", analysis.title_analysis)
             self.assertIn("metrics.comments", analysis.uncertainties)
+            outcome = output["result"]["analysis_outcome"]
+            self.assertEqual(outcome["status_category"], "partial")
+            self.assertIn("【客观数据】", outcome["user_summary"])
+            self.assertIn("【Codex 判断】", outcome["user_summary"])
+            self.assertIn("【信息不足】", outcome["user_summary"])
+            self.assertNotIn(output["result"]["candidate_rule_ids"][0], outcome["user_summary"])
+            self.assertNotIn("account_fit", outcome["user_summary"])
             item = JsonRepository(data_dir, ContentInboxItem).read(inbox_item.id)
             self.assertEqual(item.status, "analyzed")
 
@@ -1751,6 +1758,10 @@ class CliTests(unittest.TestCase):
 
             self.assertTrue(output["ok"])
             self.assertEqual(output["result"]["analysis_template"], "video_tutorial")
+            summary = output["result"]["analysis_outcome"]["user_summary"]
+            self.assertIn("没有视频帧或字幕", summary)
+            self.assertNotIn("前 3 秒", summary)
+            self.assertNotIn("音乐", summary)
 
     def test_promote_to_benchmark_creates_account_post_and_links_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
