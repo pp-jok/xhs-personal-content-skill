@@ -114,6 +114,53 @@ class AnalysisEvidenceOutcomeTests(unittest.TestCase):
         self.assertNotIn("表现差", summary)
         self.assertIn("没有获取到完整互动数据", summary)
 
+    def test_engagement_focus_with_visible_metrics_is_limited_but_complete(self) -> None:
+        capture = CaptureRecord(
+            id="capture-visible-metrics",
+            inbox_item_id="inbox-visible-metrics",
+            source_url="https://www.xiaohongshu.com/explore/visible-metrics",
+            capture_status="partial",
+            title="新手如何做清晰表达",
+            body="先讲对象，再讲问题，最后给一个具体做法。",
+            content_type="image",
+            metrics={"likes": 120, "collects": 35, "comments": 8, "shares": 3},
+            missing_fields=["image.content", "comments"],
+        )
+        analysis = analyze_capture(capture)
+
+        outcome = build_analysis_outcome(capture, analysis, requested_focus=["数据表现"])
+
+        self.assertEqual(outcome["status_category"], "complete")
+        self.assertTrue(outcome["decision_readiness"]["can_decide_requested_focus"])
+        self.assertFalse(outcome["decision_readiness"]["can_decide_benchmark_value"])
+        self.assertTrue(any(item["dimension"] == "互动表现" for item in outcome["analysis_judgments"]))
+        reason = outcome["decision_readiness"]["reason"]
+        self.assertIn("有限参考", reason)
+        self.assertNotIn("表现好", reason)
+        self.assertNotIn("表现差", reason)
+        self.assertNotIn("爆款", reason)
+        self.assertNotIn("导致", reason)
+
+    def test_engagement_focus_without_visible_metrics_is_not_complete(self) -> None:
+        capture = CaptureRecord(
+            id="capture-empty-metrics-focus",
+            inbox_item_id="inbox-empty-metrics-focus",
+            source_url="https://www.xiaohongshu.com/explore/empty-metrics-focus",
+            capture_status="partial",
+            title="新手如何做清晰表达",
+            body="先讲对象，再讲问题，最后给一个具体做法。",
+            content_type="image",
+            metrics={"likes": None, "collects": None, "comments": None, "shares": None},
+            missing_fields=["metrics.likes", "metrics.collects", "metrics.comments", "metrics.shares"],
+        )
+        analysis = analyze_capture(capture)
+
+        outcome = build_analysis_outcome(capture, analysis, requested_focus=["数据表现"])
+
+        self.assertNotEqual(outcome["status_category"], "complete")
+        self.assertFalse(outcome["decision_readiness"]["can_decide_requested_focus"])
+        self.assertTrue(any("互动数据" in gap for gap in outcome["information_gaps"]))
+
     def test_missing_title_and_body_is_insufficient_even_when_capture_succeeded(self) -> None:
         capture = CaptureRecord(
             id="capture-empty",
@@ -312,6 +359,99 @@ class AnalysisEvidenceOutcomeTests(unittest.TestCase):
 
         self.assertFalse(any(item["judgment"] == "封面采用人物居中构图" for item in outcome["analysis_judgments"]))
         self.assertTrue(any("图片内容证据" in gap for gap in outcome["information_gaps"]))
+
+    def test_cover_focus_with_image_content_text_has_consistent_outcome(self) -> None:
+        capture = CaptureRecord(
+            id="capture-cover-content-text",
+            inbox_item_id="inbox-cover-content-text",
+            source_url="https://www.xiaohongshu.com/explore/cover-content-text",
+            capture_status="success",
+            title="表达能力提升方法",
+            body="正文可见。",
+            content_type="image",
+            images=[
+                {
+                    "path": "capture/image.jpg",
+                    "content_text": "3 个提升表达能力的方法",
+                }
+            ],
+        )
+        analysis = analyze_capture(capture)
+        analysis.cover_analysis = {
+            "observable": {"content_text": "3 个提升表达能力的方法"},
+            "inference": "封面使用明确的方法型文案。",
+        }
+
+        outcome = build_analysis_outcome(capture, analysis, requested_focus=["封面"])
+
+        self.assertEqual(outcome["status_category"], "complete")
+        self.assertTrue(outcome["decision_readiness"]["can_decide_requested_focus"])
+        self.assertFalse(outcome["decision_readiness"]["can_decide_benchmark_value"])
+        self.assertTrue(any(item["dimension"] == "封面与图片" for item in outcome["analysis_judgments"]))
+        self.assertFalse(any("没有图片内容证据" in gap for gap in outcome["information_gaps"]))
+        self.assertFalse(any(item["dimension"] == "封面与图片" for item in outcome["dimension_limitations"]))
+
+    def test_analysis_observable_cannot_fabricate_image_content_evidence(self) -> None:
+        capture = CaptureRecord(
+            id="capture-cover-observable-only",
+            inbox_item_id="inbox-cover-observable-only",
+            source_url="https://www.xiaohongshu.com/explore/cover-observable-only",
+            capture_status="success",
+            title="表达能力提升方法",
+            body="正文可见。",
+            content_type="image",
+            images=[{"remote_url": "https://example.test/image.jpg", "path": "capture/image.jpg", "alt": "首图"}],
+            missing_fields=["image.content"],
+        )
+        analysis = analyze_capture(capture)
+        analysis.cover_analysis = {
+            "observable": {"content_text": "伪造的封面文字"},
+            "inference": "封面使用明确的方法型文案。",
+        }
+
+        outcome = build_analysis_outcome(capture, analysis, requested_focus=["封面"])
+
+        self.assertNotEqual(outcome["status_category"], "complete")
+        self.assertFalse(any(item["dimension"] == "封面与图片" for item in outcome["analysis_judgments"]))
+        self.assertTrue(any("图片内容证据" in gap for gap in outcome["information_gaps"]))
+        self.assertTrue(any(item["dimension"] == "封面与图片" for item in outcome["dimension_limitations"]))
+
+    def test_video_and_audio_content_evidence_remove_matching_limitations(self) -> None:
+        capture = CaptureRecord(
+            id="capture-video-evidence",
+            inbox_item_id="inbox-video-evidence",
+            source_url="https://www.xiaohongshu.com/explore/video-evidence",
+            capture_status="success",
+            title="新手表达练习方法",
+            body="这条内容展示了一个练习步骤。",
+            content_type="video",
+            video={
+                "duration_seconds": 35,
+                "media_type": "video",
+                "keyframes": ["开头展示练习场景"],
+                "transcript": "今天讲一个表达练习方法",
+            },
+        )
+        analysis = analyze_capture(capture)
+        analysis.visual_analysis = {
+            "observable": {"keyframes": ["开头展示练习场景"]},
+            "inference": "视频开头展示了练习场景。",
+        }
+        analysis.audio_analysis = {
+            "observable": {"transcript": "今天讲一个表达练习方法"},
+            "inference": "口播直接说明练习方法。",
+        }
+
+        outcome = build_analysis_outcome(capture, analysis, requested_focus=["视频", "音频"])
+
+        self.assertEqual(outcome["status_category"], "complete")
+        self.assertTrue(outcome["decision_readiness"]["can_decide_requested_focus"])
+        self.assertTrue(any(item["dimension"] == "视频与视觉" for item in outcome["analysis_judgments"]))
+        self.assertTrue(any(item["dimension"] == "音频与字幕" for item in outcome["analysis_judgments"]))
+        self.assertFalse(any("没有视频帧或字幕" in gap for gap in outcome["information_gaps"]))
+        self.assertFalse(any("没有音频或字幕转写" in gap for gap in outcome["information_gaps"]))
+        self.assertFalse(any(item["dimension"] == "视频画面" for item in outcome["dimension_limitations"]))
+        self.assertFalse(any(item["dimension"] == "音频和字幕" for item in outcome["dimension_limitations"]))
 
     def test_user_summary_hides_account_fit_and_candidate_rule_ids(self) -> None:
         capture = CaptureRecord(

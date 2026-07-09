@@ -55,6 +55,9 @@ FOCUS_DIMENSION_ALIASES = {
     "video": "video",
     "视频": "video",
     "镜头": "video",
+    "audio": "audio",
+    "音频": "audio",
+    "字幕": "audio",
     "comments": "comments",
     "comment": "comments",
     "评论": "comments",
@@ -147,10 +150,10 @@ def build_analysis_judgments(capture: CaptureRecord, analysis: BenchmarkAnalysis
         if not isinstance(analysis_field, dict):
             continue
         inference = str(analysis_field.get("inference") or "").strip()
-        if not is_positive_inference(inference):
-            continue
         evidence = evidence_for_dimension(capture, analysis_field.get("observable"), evidence_key)
         if not evidence:
+            continue
+        if not is_usable_inference(evidence_key, inference, evidence):
             continue
         judgments.append(
             {
@@ -174,14 +177,16 @@ def build_information_gaps(capture: CaptureRecord) -> list[str]:
     if capture.content_type in {"image", "mixed"}:
         if not capture.images:
             add_unique(gaps, "没有图片结构证据，无法分析封面和视觉表达")
-        else:
+        elif not has_image_content_evidence(capture):
             add_unique(gaps, MISSING_FIELD_LABELS["image.content"])
     if capture.content_type in {"video", "mixed"}:
         if not capture.video:
             add_unique(gaps, MISSING_FIELD_LABELS["video"])
         else:
-            add_unique(gaps, MISSING_FIELD_LABELS["video.keyframes"])
-            add_unique(gaps, MISSING_FIELD_LABELS["audio.transcript"])
+            if not has_video_content_evidence(capture):
+                add_unique(gaps, MISSING_FIELD_LABELS["video.keyframes"])
+            if not has_audio_content_evidence(capture):
+                add_unique(gaps, MISSING_FIELD_LABELS["audio.transcript"])
     if not visible_comment_texts(capture.comments):
         add_unique(gaps, MISSING_FIELD_LABELS["comments"])
     for field in capture.missing_fields:
@@ -210,7 +215,7 @@ def build_dimension_limitations(capture: CaptureRecord) -> list[dict[str, str]]:
                 "impact": "无法判断内容展开路径、信息密度和行动指导",
             }
         )
-    if capture.content_type in {"image", "mixed"}:
+    if capture.content_type in {"image", "mixed"} and not has_image_content_evidence(capture):
         limitations.append(
             {
                 "dimension": "封面与图片",
@@ -218,7 +223,7 @@ def build_dimension_limitations(capture: CaptureRecord) -> list[dict[str, str]]:
                 "impact": "无法判断封面文字、构图、人物、产品、环境和视觉风格",
             }
         )
-    if capture.content_type in {"video", "mixed"}:
+    if capture.content_type in {"video", "mixed"} and not has_video_content_evidence(capture):
         limitations.append(
             {
                 "dimension": "视频画面",
@@ -226,6 +231,7 @@ def build_dimension_limitations(capture: CaptureRecord) -> list[dict[str, str]]:
                 "impact": "无法判断前几秒画面、镜头变化、字幕和剪辑节奏",
             }
         )
+    if capture.content_type in {"video", "mixed"} and not has_audio_content_evidence(capture):
         limitations.append(
             {
                 "dimension": "音频和字幕",
@@ -390,7 +396,7 @@ def image_content_evidence(capture: CaptureRecord, observable: Any) -> list[str]
             value = str(image.get(key) or "").strip()
             if value:
                 evidence.append(value)
-    return evidence or observable_evidence_for_keys(observable, {"content_text", "ocr_text", "description", "visible_text"})
+    return compact_evidence(evidence)
 
 
 def video_content_evidence(capture: CaptureRecord, observable: Any) -> list[str]:
@@ -401,7 +407,7 @@ def video_content_evidence(capture: CaptureRecord, observable: Any) -> list[str]
             evidence.extend(str(item).strip() for item in value if str(item).strip())
         elif value:
             evidence.append(str(value).strip())
-    return evidence or observable_evidence_for_keys(observable, {"keyframes", "subtitles", "visible_text", "description"})
+    return compact_evidence(evidence)
 
 
 def audio_content_evidence(capture: CaptureRecord, observable: Any) -> list[str]:
@@ -410,7 +416,19 @@ def audio_content_evidence(capture: CaptureRecord, observable: Any) -> list[str]
         value = capture.video.get(key)
         if value:
             evidence.append(str(value).strip())
-    return evidence or observable_evidence_for_keys(observable, {"transcript", "audio_transcript", "subtitles"})
+    return compact_evidence(evidence)
+
+
+def has_image_content_evidence(capture: CaptureRecord) -> bool:
+    return bool(image_content_evidence(capture, None))
+
+
+def has_video_content_evidence(capture: CaptureRecord) -> bool:
+    return bool(video_content_evidence(capture, None))
+
+
+def has_audio_content_evidence(capture: CaptureRecord) -> bool:
+    return bool(audio_content_evidence(capture, None))
 
 
 def observable_evidence_for_keys(observable: Any, keys: set[str]) -> list[str]:
@@ -443,6 +461,14 @@ def compact_evidence(values: Any) -> list[str]:
         if text and text not in evidence:
             evidence.append(text)
     return evidence
+
+
+def is_usable_inference(dimension: str, inference: str, evidence: list[str]) -> bool:
+    if not inference:
+        return False
+    if dimension == "engagement" and evidence:
+        return "参考" in inference and not any(marker in inference for marker in ("缺少", "没有", "无法判断", "不足"))
+    return is_positive_inference(inference)
 
 
 def is_positive_inference(inference: str) -> bool:
@@ -484,7 +510,7 @@ def build_requested_focus_reason(fulfilled_required: list[str], missing_required
         if fulfilled_required == ["title"]:
             return "标题证据足够，可以判断标题表达。其他未请求维度仍可能存在信息缺口。"
         if fulfilled_required == ["engagement"]:
-            return "已有可见互动指标，可进行有限参考，但不能判断表现好坏或因果原因。"
+            return "已有可见互动指标，可进行有限参考，但不能据此判断互动水平或产生原因。"
         labels = join_dimension_labels(fulfilled_required)
         return f"{labels}证据足够，可以判断用户请求的维度。其他未请求维度仍可能存在信息缺口。"
     if not fulfilled_required:
