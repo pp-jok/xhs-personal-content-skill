@@ -173,6 +173,28 @@ class AnalysisEvidenceOutcomeTests(unittest.TestCase):
         self.assertTrue(any("评论" in gap for gap in outcome["information_gaps"]))
         self.assertTrue(any("互动" in gap for gap in outcome["information_gaps"]))
 
+    def test_title_only_focus_readiness_does_not_claim_body_is_enough(self) -> None:
+        capture = CaptureRecord(
+            id="capture-title-readiness",
+            inbox_item_id="inbox-title-readiness",
+            source_url="https://www.xiaohongshu.com/explore/title-readiness",
+            capture_status="partial",
+            title="新手如何做清晰表达",
+            content_type="image",
+            missing_fields=["body", "image.content", "comments", "metrics.likes"],
+        )
+        analysis = analyze_capture(capture)
+
+        outcome = build_analysis_outcome(capture, analysis, requested_focus=["标题"])
+
+        self.assertEqual(outcome["status_category"], "complete")
+        reason = outcome["decision_readiness"]["reason"]
+        self.assertIn("标题证据足够", reason)
+        self.assertIn("标题表达", reason)
+        self.assertNotIn("正文", reason)
+        self.assertNotIn("正文", outcome["user_summary"].split("【是否可以继续判断】", 1)[1])
+        self.assertTrue(outcome["decision_readiness"]["can_decide_requested_focus"])
+
     def test_requested_cover_focus_is_not_complete_without_image_content_evidence(self) -> None:
         capture = CaptureRecord(
             id="capture-cover-focus",
@@ -191,6 +213,28 @@ class AnalysisEvidenceOutcomeTests(unittest.TestCase):
 
         self.assertNotEqual(outcome["status_category"], "complete")
 
+    def test_cover_focus_readiness_is_false_without_image_content_evidence(self) -> None:
+        capture = CaptureRecord(
+            id="capture-cover-readiness",
+            inbox_item_id="inbox-cover-readiness",
+            source_url="https://www.xiaohongshu.com/explore/cover-readiness",
+            capture_status="success",
+            title="表达能力提升方法",
+            body="正文可见。",
+            content_type="image",
+            images=[{"remote_url": "https://example.test/image.jpg", "path": "capture/image.jpg"}],
+            missing_fields=["image.content"],
+        )
+        analysis = analyze_capture(capture)
+
+        outcome = build_analysis_outcome(capture, analysis, requested_focus=["封面"])
+
+        self.assertNotEqual(outcome["status_category"], "complete")
+        self.assertFalse(outcome["decision_readiness"]["can_decide_benchmark_value"])
+        self.assertFalse(outcome["decision_readiness"]["can_decide_requested_focus"])
+        self.assertIn("封面", outcome["decision_readiness"]["reason"])
+        self.assertIn("图片内容证据", outcome["decision_readiness"]["reason"])
+
     def test_requested_title_and_structure_is_partial_when_body_is_missing(self) -> None:
         capture = CaptureRecord(
             id="capture-title-only",
@@ -206,6 +250,9 @@ class AnalysisEvidenceOutcomeTests(unittest.TestCase):
         outcome = build_analysis_outcome(capture, analysis, requested_focus=["标题", "正文结构"])
 
         self.assertEqual(outcome["status_category"], "partial")
+        reason = outcome["decision_readiness"]["reason"]
+        self.assertIn("标题可以判断", reason)
+        self.assertIn("正文结构证据不足", reason)
 
     def test_default_core_dimensions_are_complete_when_title_and_body_are_valid(self) -> None:
         capture = CaptureRecord(
@@ -226,6 +273,7 @@ class AnalysisEvidenceOutcomeTests(unittest.TestCase):
 
         self.assertEqual(outcome["status_category"], "complete")
         self.assertTrue(outcome["information_gaps"])
+        self.assertIn("标题和正文结构证据足够", outcome["decision_readiness"]["reason"])
 
     def test_outcome_uses_saved_analysis_inference_without_creating_title_judgment(self) -> None:
         capture = CaptureRecord(

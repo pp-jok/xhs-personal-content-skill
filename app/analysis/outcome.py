@@ -77,8 +77,15 @@ def build_analysis_outcome(
     information_gaps = build_information_gaps(capture)
     dimension_limitations = build_dimension_limitations(capture)
     analysis_judgments = build_analysis_judgments(capture=capture, analysis=analysis)
-    status_category = choose_status_category(analysis_judgments, requested_focus or [])
-    decision_readiness = build_decision_readiness(capture, status_category, dimension_limitations)
+    requested_focus_values = requested_focus or []
+    status_category = choose_status_category(analysis_judgments, requested_focus_values)
+    decision_readiness = build_decision_readiness(
+        capture=capture,
+        status_category=status_category,
+        dimension_limitations=dimension_limitations,
+        requested_focus=requested_focus_values,
+        analysis_judgments=analysis_judgments,
+    )
     return {
         "status_category": status_category,
         "observed_facts": observed_facts,
@@ -263,23 +270,28 @@ def build_decision_readiness(
     capture: CaptureRecord,
     status_category: str,
     dimension_limitations: list[dict[str, str]],
+    requested_focus: list[str] | None = None,
+    analysis_judgments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    if status_category == "insufficient":
-        reason = "缺少标题和正文，当前无法进行有效内容拆解。"
-        if capture.title or capture.body:
-            reason = "核心内容证据不足，当前只能保留已看到的事实。"
-        return {"can_decide_benchmark_value": False, "reason": reason}
-    limited_dimensions = "、".join(item["dimension"] for item in dimension_limitations[:3])
-    if status_category == "complete":
-        return {
-            "can_decide_benchmark_value": True,
-            "reason": "标题、正文和主要可见证据足够进入是否值得对标的人工判断。",
-        }
-    reason = "标题或正文证据可用于初步判断选题和结构"
-    if limited_dimensions:
-        reason += f"；{limited_dimensions}仍有证据限制"
-    reason += "。"
-    return {"can_decide_benchmark_value": True, "reason": reason}
+    requested_dimensions = normalize_requested_focus(requested_focus or [])
+    required_dimensions = requested_dimensions or ["title", "structure"]
+    fulfilled_dimensions = fulfilled_dimension_keys(analysis_judgments or [])
+    fulfilled_required = [dimension for dimension in required_dimensions if dimension in fulfilled_dimensions]
+    missing_required = [dimension for dimension in required_dimensions if dimension not in fulfilled_dimensions]
+    can_decide_requested_focus = bool(required_dimensions) and not missing_required
+    is_default_core = not requested_dimensions
+    can_decide_benchmark_value = is_default_core and can_decide_requested_focus
+
+    if requested_dimensions:
+        reason = build_requested_focus_reason(fulfilled_required, missing_required)
+    else:
+        reason = build_default_readiness_reason(fulfilled_required, missing_required, capture)
+
+    return {
+        "can_decide_benchmark_value": can_decide_benchmark_value,
+        "can_decide_requested_focus": can_decide_requested_focus,
+        "reason": reason,
+    }
 
 
 def build_user_summary(
@@ -461,6 +473,52 @@ def dimension_key_for_label(label: str) -> str:
         if label == dimension_label:
             return key
     return ""
+
+
+def fulfilled_dimension_keys(judgments: list[dict[str, Any]]) -> set[str]:
+    return {dimension_key_for_label(item["dimension"]) for item in judgments}
+
+
+def build_requested_focus_reason(fulfilled_required: list[str], missing_required: list[str]) -> str:
+    if not missing_required:
+        if fulfilled_required == ["title"]:
+            return "标题证据足够，可以判断标题表达。其他未请求维度仍可能存在信息缺口。"
+        if fulfilled_required == ["engagement"]:
+            return "已有可见互动指标，可进行有限参考，但不能判断表现好坏或因果原因。"
+        labels = join_dimension_labels(fulfilled_required)
+        return f"{labels}证据足够，可以判断用户请求的维度。其他未请求维度仍可能存在信息缺口。"
+    if not fulfilled_required:
+        if "cover" in missing_required:
+            return "当前只有图片结构，没有图片内容证据，暂时不能判断封面表达。"
+        labels = join_dimension_labels(missing_required)
+        return f"{labels}证据不足，暂时不能判断用户请求的维度。"
+    fulfilled_text = join_partial_fulfilled_labels(fulfilled_required)
+    missing_text = join_dimension_labels(missing_required)
+    return f"{fulfilled_text}可以判断，但{missing_text}证据不足，当前只能进行部分判断。"
+
+
+def build_default_readiness_reason(fulfilled_required: list[str], missing_required: list[str], capture: CaptureRecord) -> str:
+    if not missing_required:
+        return "标题和正文结构证据足够，可以进入是否值得对标的初步人工判断。"
+    if not fulfilled_required:
+        if capture.title or capture.body:
+            return "核心内容证据不足，当前只能保留已看到的事实。"
+        return "缺少标题和正文，当前无法进行有效内容拆解。"
+    fulfilled_text = join_partial_fulfilled_labels(fulfilled_required)
+    missing_text = join_dimension_labels(missing_required)
+    return f"{fulfilled_text}可以判断，但{missing_text}证据不足，当前只能进行部分判断。"
+
+
+def join_dimension_labels(dimensions: list[str]) -> str:
+    return "和".join(DIMENSION_LABEL_BY_KEY.get(dimension, dimension) for dimension in dimensions)
+
+
+def join_partial_fulfilled_labels(dimensions: list[str]) -> str:
+    if dimensions == ["title"]:
+        return "标题"
+    if dimensions == ["structure"]:
+        return "正文结构"
+    return join_dimension_labels(dimensions)
 
 
 def gaps_for_requested_focus(information_gaps: list[str], requested_focus: list[str]) -> list[str]:
