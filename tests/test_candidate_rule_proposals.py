@@ -1,5 +1,6 @@
 import sys
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -121,6 +122,48 @@ class CandidateRuleProposalTests(unittest.TestCase):
 
             self.assertEqual(len(result["created_rules"]), 1)
 
+    def test_risky_cannot_use_change_to_disguise_a_recommendation(self) -> None:
+        capture, analysis, profile = make_ready_records(classification="risky")
+        payload = valid_payload()
+        payload["proposals"][0]["rule_text"] = "改为使用“一定成功”的表达。"
+        payload["proposals"][0]["risk_notes"] = ["绝对承诺与账号边界不一致"]
+
+        result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
+
+        self.assertEqual(result["proposal_results"][0]["outcome"], "rejected")
+        self.assertEqual(result["created_rules"], [])
+        self.assertEqual(result["created_evidence"], [])
+        self.assertEqual(result["created_provenance"], [])
+
+    def test_not_recommended_cannot_use_change_to_disguise_a_recommendation(self) -> None:
+        capture, analysis, profile = make_ready_records(classification="not_recommended")
+        payload = valid_payload()
+        payload["proposals"][0]["rule_text"] = "改为采用原帖中的强刺激标题。"
+        payload["proposals"][0]["risk_notes"] = ["表达强度与账号边界不一致"]
+
+        result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
+
+        self.assertEqual(result["proposal_results"][0]["outcome"], "rejected")
+
+    def test_do_not_use_remains_a_negative_rule_despite_positive_action_word(self) -> None:
+        capture, analysis, profile = make_ready_records(classification="risky")
+        payload = valid_payload()
+        payload["proposals"][0]["rule_text"] = "不要使用绝对承诺。"
+        payload["proposals"][0]["risk_notes"] = ["绝对承诺与账号边界不一致"]
+
+        result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
+
+        self.assertEqual(result["proposal_results"][0]["outcome"], "created")
+
+    def test_adaptable_allows_change_when_a_boundary_is_present(self) -> None:
+        capture, analysis, profile = make_ready_records(classification="adaptable")
+        payload = valid_payload()
+        payload["proposals"][0]["rule_text"] = "标题改为更具体的人群和问题描述。"
+
+        result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
+
+        self.assertEqual(result["proposal_results"][0]["outcome"], "created")
+
     def test_media_path_and_metrics_cannot_be_used_as_evidence(self) -> None:
         capture, analysis, profile = make_ready_records()
         capture.images = [{"path": "image.png", "remote_url": "https://example.test/image.png", "alt": "首图"}]
@@ -165,6 +208,32 @@ class CandidateRuleProposalTests(unittest.TestCase):
             self.assertEqual(result["created_evidence"], [])
             self.assertEqual(result["created_provenance"], [])
             self.assertEqual(result["proposal_results"][0]["outcome"], "duplicate")
+
+    def test_duplicate_proposals_in_same_payload_create_only_one_rule(self) -> None:
+        capture, analysis, profile = make_ready_records()
+        first = valid_payload()["proposals"][0]
+        second = deepcopy(first)
+        second["scope"] = ["标题", "职场新人 内容！"]
+
+        result = propose_candidate_rules(capture, analysis, profile, {"proposals": [first, second]}, [], [])
+
+        self.assertEqual(len(result["created_rules"]), 1)
+        self.assertEqual(len(result["created_evidence"]), 1)
+        self.assertEqual(len(result["created_provenance"]), 2)
+        self.assertEqual([item["outcome"] for item in result["proposal_results"]], ["created", "duplicate"])
+        self.assertIsNone(result["proposal_results"][1]["rule"])
+        self.assertNotIn("rule-", result["user_summary"])
+
+    def test_same_text_with_different_scope_in_same_payload_is_not_exact_duplicate(self) -> None:
+        capture, analysis, profile = make_ready_records()
+        first = valid_payload()["proposals"][0]
+        second = deepcopy(first)
+        second["scope"] = ["另一类内容", "标题"]
+
+        result = propose_candidate_rules(capture, analysis, profile, {"proposals": [first, second]}, [], [])
+
+        self.assertEqual(len(result["created_rules"]), 2)
+        self.assertEqual([item["outcome"] for item in result["proposal_results"]], ["created", "created"])
 
     def test_rejected_duplicate_allows_a_new_candidate_with_history_warning(self) -> None:
         capture, analysis, profile = make_ready_records()

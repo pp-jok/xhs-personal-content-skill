@@ -24,8 +24,8 @@ REQUIRED_PROPOSAL_FIELDS = {
 }
 ACTIVE_DUPLICATE_STATUSES = {"candidate", "approved", "testing", "validated"}
 NON_COMMENT_DIMENSIONS = {"选题", "标题", "正文结构", "封面与图片", "视频与视觉", "音频与字幕"}
-NEGATIVE_MARKERS = ("避免", "不要", "不使用", "禁止", "风险", "不建议", "不应", "不能", "删除", "改为")
-POSITIVE_MARKERS = ("应该使用", "直接使用", "必须使用", "推荐使用", "照搬")
+NEGATIVE_MARKERS = ("避免", "不要", "不使用", "禁止", "风险", "不建议", "不应", "不能", "删除")
+POSITIVE_MARKERS = ("使用", "采用", "保留", "增加", "强化", "突出", "照搬")
 PUNCTUATION = re.compile(r"[\s\.,;:!?，。；：！？、()（）\[\]【】'\"“”‘’<>《》]", re.UNICODE)
 
 
@@ -47,6 +47,7 @@ def propose_candidate_rules(
     saved_judgments = judgments_by_dimension(capture, analysis)
 
     result = empty_result(analysis)
+    rules_for_deduplication = list(existing_rules)
     for index, proposal in enumerate(proposals, start=1):
         try:
             validate_proposal_evidence(proposal, saved_judgments, assessment_by_dimension)
@@ -55,7 +56,7 @@ def propose_candidate_rules(
         except CandidateProposalError as exc:
             result["proposal_results"].append(proposal_result(index, "rejected", reasons=[str(exc)]))
             continue
-        duplicate = find_exact_duplicate(proposal, existing_rules)
+        duplicate = find_exact_duplicate(proposal, rules_for_deduplication)
         if duplicate and duplicate.status in ACTIVE_DUPLICATE_STATUSES:
             result["proposal_results"].append(
                 proposal_result(index, "duplicate", reasons=["已有相同候选或正式规则，本次不重复保存。"])
@@ -75,6 +76,7 @@ def propose_candidate_rules(
         result["created_evidence"].extend(evidence)
         result["created_provenance"].extend(provenance)
         result["proposal_results"].append(proposal_result(index, "created", rule=rule, warnings=warnings))
+        rules_for_deduplication.append(rule)
 
     result["user_summary"] = build_candidate_rule_summary(result)
     return result
@@ -175,7 +177,7 @@ def validate_classification_direction(proposal: dict[str, Any], assessments: dic
     classifications = {assessments[str(item["dimension"])]["classification"] for item in proposal["evidence"]}
     rule_text = str(proposal["rule_text"])
     negative = is_negative_rule(rule_text, proposal["risk_notes"])
-    positive = any(marker in rule_text for marker in POSITIVE_MARKERS)
+    positive = is_explicitly_positive_rule(rule_text)
     if "adaptable" in classifications and not has_adaptation_boundary(proposal):
         raise CandidateProposalError("需要改造的内容必须说明调整边界，不能作为无条件规则保存。")
     if "not_recommended" in classifications and (not negative or positive or not proposal["risk_notes"]):
@@ -382,7 +384,17 @@ def has_adaptation_boundary(proposal: dict[str, Any]) -> bool:
 
 
 def is_negative_rule(rule_text: str, risks: list[str]) -> bool:
-    return any(marker in rule_text for marker in NEGATIVE_MARKERS) or bool(risks and any(marker in " ".join(risks) for marker in NEGATIVE_MARKERS))
+    if is_explicitly_positive_rule(rule_text):
+        return False
+    return has_negative_marker(rule_text) or any(has_negative_marker(risk) for risk in risks)
+
+
+def is_explicitly_positive_rule(rule_text: str) -> bool:
+    return not has_negative_marker(rule_text) and any(marker in rule_text for marker in POSITIVE_MARKERS)
+
+
+def has_negative_marker(value: str) -> bool:
+    return any(marker in value for marker in NEGATIVE_MARKERS)
 
 
 def requires_video(proposal: dict[str, Any]) -> bool:
