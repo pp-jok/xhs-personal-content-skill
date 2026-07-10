@@ -24,6 +24,30 @@ DIMENSION_REQUIREMENTS = {
     "评论": ("target_audience",),
 }
 
+GENERIC_POSITIVE_MATCH_PHRASES = {
+    "人",
+    "大家",
+    "所有人",
+    "用户",
+    "新手",
+    "小白",
+    "普通人",
+    "内容",
+    "账号",
+    "粉丝",
+    "读者",
+    "观众",
+    "客户",
+    "增长",
+    "分享",
+    "学习",
+    "生活",
+    "工作",
+    "变现",
+    "建立影响力",
+}
+COMMENT_TEXT_FIELDS = ("content", "text", "body", "comment_text")
+
 
 def assess_account_fit(
     capture: CaptureRecord,
@@ -248,17 +272,41 @@ def find_positive_match_evidence(
     candidates.extend(("运营目标", value) for value in profile.goals)
     for label, value in candidates:
         phrase = str(value).strip()
-        if phrase and phrase in source_text:
+        if is_eligible_positive_match_phrase(label, phrase) and phrase in source_text:
             return [f"{label}明确出现：{phrase}"]
     return []
+
+
+def is_eligible_positive_match_phrase(label: str, phrase: str) -> bool:
+    if not phrase or phrase.isdigit() or not any(character.isalnum() for character in phrase):
+        return False
+    if phrase in GENERIC_POSITIVE_MATCH_PHRASES:
+        return False
+    minimum_length = 4 if label == "账号定位" else 3
+    return len(phrase) >= minimum_length
 
 
 def text_for_element(capture: CaptureRecord, element: str) -> str:
     if element == "标题":
         return capture.title
-    if element in {"正文结构", "评论"}:
+    if element == "正文结构":
         return capture.body
+    if element == "评论":
+        return comment_text(capture)
     return f"{capture.title}\n{capture.body}"
+
+
+def comment_text(capture: CaptureRecord) -> str:
+    texts: list[str] = []
+    for comment in capture.comments:
+        if not isinstance(comment, dict):
+            continue
+        for field in COMMENT_TEXT_FIELDS:
+            value = comment.get(field)
+            if isinstance(value, str) and value.strip():
+                texts.append(value.strip())
+                break
+    return "\n".join(texts)
 
 
 def assessment(

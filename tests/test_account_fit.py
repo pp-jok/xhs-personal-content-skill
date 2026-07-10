@@ -54,6 +54,30 @@ class AccountFitAssessmentTests(unittest.TestCase):
         self.assertFalse(result["decision_readiness"]["can_decide_reference_value"])
         self.assertNotIn("可借鉴结构或方法", summary)
 
+    def test_single_character_audience_cannot_form_positive_match(self) -> None:
+        capture = make_capture(title="周末露营装备推荐", body="很多人喜欢在周末露营。")
+        profile = make_profile(target_audience=["人"])
+
+        result = assess_account_fit(capture, make_analysis(capture), profile)
+        by_element = {item["element"]: item for item in result["assessments"]}
+
+        self.assertNotEqual(by_element["标题"]["classification"], "directly_borrowable")
+        self.assertNotEqual(by_element["正文结构"]["classification"], "directly_borrowable")
+        self.assertFalse(result["decision_readiness"]["can_decide_reference_value"])
+        self.assertNotIn("可借鉴结构或方法", build_account_fit_summary(result))
+
+    def test_generic_audience_cannot_form_positive_match(self) -> None:
+        capture = make_capture(title="新手露营装备推荐", body="给新手介绍帐篷、睡袋和露营灯。")
+        profile = make_profile(target_audience=["新手"])
+
+        result = assess_account_fit(capture, make_analysis(capture), profile)
+        by_element = {item["element"]: item for item in result["assessments"]}
+
+        self.assertEqual(by_element["标题"]["classification"], "insufficient_information")
+        self.assertEqual(by_element["正文结构"]["classification"], "insufficient_information")
+        self.assertEqual(result["status_category"], "insufficient")
+        self.assertFalse(result["decision_readiness"]["can_decide_reference_value"])
+
     def test_explicit_audience_phrase_is_positive_match_evidence(self) -> None:
         capture = make_capture(
             title="职场新人如何练习清晰表达",
@@ -66,6 +90,54 @@ class AccountFitAssessmentTests(unittest.TestCase):
         self.assertEqual(title["classification"], "directly_borrowable")
         self.assertIn("职场新人", " ".join(title["profile_evidence"]))
         self.assertIn("职场新人", title["reason"])
+
+    def test_generic_goal_cannot_form_positive_match(self) -> None:
+        capture = make_capture(title="露营装备推荐", body="这篇内容讨论增长方法。")
+        profile = make_profile(target_audience=[], goals=["增长"])
+
+        result = assess_account_fit(capture, make_analysis(capture), profile)
+        by_element = {item["element"]: item for item in result["assessments"]}
+
+        self.assertNotEqual(by_element["标题"]["classification"], "directly_borrowable")
+        self.assertNotEqual(by_element["正文结构"]["classification"], "directly_borrowable")
+
+    def test_comment_uses_visible_comment_text_for_positive_match(self) -> None:
+        capture = make_capture(
+            title="第一次汇报怎么开场",
+            body="正文不包含目标受众短语。",
+            comments=[{"content": "职场新人最关心第一次汇报怎么开场"}],
+        )
+        analysis = make_comment_analysis(capture)
+
+        result = assess_account_fit(capture, analysis, make_profile())
+        comment = next(item for item in result["assessments"] if item["element"] == "评论")
+
+        self.assertEqual(comment["classification"], "directly_borrowable")
+        self.assertIn("职场新人", " ".join(comment["profile_evidence"]))
+        self.assertIn("职场新人", comment["reason"])
+
+    def test_body_cannot_impersonate_comment_evidence(self) -> None:
+        capture = make_capture(
+            title="表达练习方法",
+            body="职场新人需要练习表达。",
+            comments=[{"content": "露营灯在哪里买"}],
+        )
+
+        result = assess_account_fit(capture, make_comment_analysis(capture), make_profile())
+        comment = next(item for item in result["assessments"] if item["element"] == "评论")
+
+        self.assertEqual(comment["classification"], "insufficient_information")
+
+    def test_comment_without_visible_text_does_not_fall_back_to_body(self) -> None:
+        capture = make_capture(
+            body="职场新人需要练习表达。",
+            comments=[{"likes": 10, "author": "某用户"}],
+        )
+        analysis = make_comment_analysis(capture)
+
+        result = assess_account_fit(capture, analysis, make_profile())
+
+        self.assertNotIn("评论", [item["element"] for item in result["assessments"]])
 
     def test_content_format_mismatch_remains_adaptable_with_real_cover_evidence(self) -> None:
         capture = make_capture(
@@ -207,6 +279,15 @@ def make_analysis(capture: CaptureRecord) -> BenchmarkAnalysis:
         title_analysis={"observable": capture.title, "inference": "标题提出具体练习问题。"},
         structure_analysis={"observable": capture.body, "inference": "正文按对象、步骤展开。"},
     )
+
+
+def make_comment_analysis(capture: CaptureRecord) -> BenchmarkAnalysis:
+    analysis = make_analysis(capture)
+    analysis.comment_analysis = {
+        "observable": capture.comments,
+        "inference": "可见评论正文可作为有限需求线索。",
+    }
+    return analysis
 
 
 def make_profile(**changes: object) -> CreatorProfile:
