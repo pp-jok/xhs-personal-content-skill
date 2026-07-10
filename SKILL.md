@@ -276,12 +276,13 @@ Action:
 1. Read account profile, tags, existing benchmark accounts/posts, and user preference feedback.
 2. If the user provides only a link, use `add-inbox-item`, then `capture-xhs-link --cdp-url http://127.0.0.1:9222` when the user has started the dedicated Chrome debug session. If browser capture fails, explain the diagnosis plainly and fall back to screenshot/copied text/manual file.
 3. When captured content exists, use `analyze-captured-post` to split observable facts, inferences, uncertainties, transferable elements, and non-transferable elements.
-4. Extract: title, cover text, raw content, content type, visible metrics, source account, user-stated reason, borrowable points, non-borrowable points, rule candidates.
-5. When the user provides an image, inspect it and transcribe only visible content. Do not invent missing text or metrics.
-6. If the user confirms it is worth benchmarking, use `promote-to-benchmark`.
-7. If the source account is new and enough information exists, also add/update the benchmark account.
-8. Use `add-benchmark-post` only after enough visible content exists to form a real benchmark post.
-9. Reply with: observed facts, useful inference, uncertainty, risk, possible rule, and one guided question such as “是否确认把它提升为对标内容？”
+4. If the user asks whether the analyzed content suits their account, compare only the confirmed post evidence with the current account profile. Explain what can be borrowed, what needs adaptation, what should not be used directly, and what is still unknown. Do not modify the profile, create rules, or promote the post as part of this assessment.
+5. Extract: title, cover text, raw content, content type, visible metrics, source account, user-stated reason, borrowable points, non-borrowable points, rule candidates.
+6. When the user provides an image, inspect it and transcribe only visible content. Do not invent missing text or metrics.
+7. If the user confirms it is worth benchmarking, use `promote-to-benchmark`.
+8. If the source account is new and enough information exists, also add/update the benchmark account.
+9. Use `add-benchmark-post` only after enough visible content exists to form a real benchmark post.
+10. Reply with: observed facts, useful inference, uncertainty, risk, possible rule, and one guided question such as “是否确认把它提升为对标内容？”
 
 For captured-post analysis, always separate:
 

@@ -1763,6 +1763,133 @@ class CliTests(unittest.TestCase):
             self.assertNotIn("前 3 秒", summary)
             self.assertNotIn("音乐", summary)
 
+    def test_assess_account_fit_updates_only_existing_analysis_and_can_be_repeated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            JsonRepository(data_dir, CreatorProfile).create(
+                CreatorProfile(
+                    id="creator-secondary",
+                    name="第二账号",
+                    platform="小红书",
+                    positioning="另一个定位",
+                    target_audience=["另一类用户"],
+                    content_style=["具体"],
+                    forbidden_expressions=[],
+                    goals=["建立信任"],
+                    content_formats=["图文"],
+                    publish_frequency="每周 1 次",
+                    notes="用于验证显式选择。",
+                )
+            )
+            inbox_item, capture = self._seed_capture(data_dir, content_type="image")
+            analysis_output = self._run_cli(["analyze-captured-post", "--workspace", temp_dir, "--capture-id", capture.id])
+            protected_collections = (
+                CreatorProfile,
+                RuleCard,
+                RuleEvidence,
+                DecisionRequest,
+                BenchmarkPost,
+                TopicItem,
+                ContentDraft,
+            )
+            before_counts = {model.collection_name: len(JsonRepository(data_dir, model).list_all()) for model in protected_collections}
+
+            output = self._run_cli(
+                [
+                    "assess-account-fit",
+                    "--workspace",
+                    temp_dir,
+                    "--analysis-id",
+                    analysis_output["result"]["analysis_id"],
+                    "--creator-id",
+                    "creator-main",
+                ]
+            )
+            repeated = self._run_cli(
+                [
+                    "assess-account-fit",
+                    "--workspace",
+                    temp_dir,
+                    "--analysis-id",
+                    analysis_output["result"]["analysis_id"],
+                    "--creator-id",
+                    "creator-main",
+                ]
+            )
+
+            self.assertTrue(output["ok"])
+            self.assertIn("account_fit_summary", output["result"])
+            self.assertIn("【与你账号的匹配判断】", output["result"]["account_fit_summary"])
+            self.assertEqual(output["result"]["account_fit"]["source_profile_id"], "creator-main")
+            self.assertEqual(repeated["result"]["analysis_id"], analysis_output["result"]["analysis_id"])
+            self.assertEqual(before_counts, {model.collection_name: len(JsonRepository(data_dir, model).list_all()) for model in protected_collections})
+            self.assertEqual(JsonRepository(data_dir, ContentInboxItem).read(inbox_item.id).status, "analyzed")
+            self.assertEqual(JsonRepository(data_dir, CaptureRecord).read(capture.id).title, capture.title)
+            self.assertEqual(len(JsonRepository(data_dir, BenchmarkAnalysis).list_all()), 1)
+
+    def test_assess_account_fit_rejects_analysis_with_missing_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            JsonRepository(data_dir, BenchmarkAnalysis).create(
+                BenchmarkAnalysis(id="analysis-missing-capture", capture_id="capture-missing")
+            )
+
+            output = self._run_cli(
+                [
+                    "assess-account-fit",
+                    "--workspace",
+                    temp_dir,
+                    "--analysis-id",
+                    "analysis-missing-capture",
+                    "--creator-id",
+                    "creator-main",
+                ],
+                expected_code=1,
+            )
+
+            self.assertFalse(output["ok"])
+            self.assertEqual(JsonRepository(data_dir, BenchmarkAnalysis).read("analysis-missing-capture").account_fit, {})
+
+    def test_assess_account_fit_rejects_missing_analysis_or_profile_without_side_effects(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            _, capture = self._seed_capture(data_dir, content_type="image")
+            analysis_output = self._run_cli(["analyze-captured-post", "--workspace", temp_dir, "--capture-id", capture.id])
+            before_profile_count = len(JsonRepository(data_dir, CreatorProfile).list_all())
+
+            missing_analysis = self._run_cli(
+                [
+                    "assess-account-fit",
+                    "--workspace",
+                    temp_dir,
+                    "--analysis-id",
+                    "missing-analysis",
+                    "--creator-id",
+                    "creator-main",
+                ],
+                expected_code=1,
+            )
+            missing_profile = self._run_cli(
+                [
+                    "assess-account-fit",
+                    "--workspace",
+                    temp_dir,
+                    "--analysis-id",
+                    analysis_output["result"]["analysis_id"],
+                    "--creator-id",
+                    "missing-creator",
+                ],
+                expected_code=1,
+            )
+
+            self.assertFalse(missing_analysis["ok"])
+            self.assertFalse(missing_profile["ok"])
+            self.assertEqual(len(JsonRepository(data_dir, CreatorProfile).list_all()), before_profile_count)
+            self.assertEqual(JsonRepository(data_dir, BenchmarkAnalysis).read(analysis_output["result"]["analysis_id"]).account_fit, {"observable": {}, "inference": "PR-3A 不判断账号适配。"})
+
     def test_promote_to_benchmark_creates_account_post_and_links_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir)
