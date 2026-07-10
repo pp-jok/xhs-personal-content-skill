@@ -406,6 +406,21 @@ python3 -m app.cli.main analyze-captured-post \
 
 本阶段不做 OCR、音频转写、关键帧抽取或真实多媒体处理。
 
+## 评估与当前账号的适配情况
+
+在帖子完成 evidence-first 分析后，可以单独评估它与一个明确账号档案的适配关系：
+
+```bash
+python3 -m app.cli.main assess-account-fit \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --analysis-id analysis-from-capture-xxxx \
+  --creator-id creator-main
+```
+
+该命令只读取已保存的帖子分析、关联采集内容和指定账号档案，并更新原 `BenchmarkAnalysis` 的账号适配结果。它会说明已验证的元素可如何借鉴、哪些需要改造、哪些不建议直接使用，以及哪些资料仍不足。
+
+它不会自动修改账号档案、创建或修改规则、提升为对标内容、生成选题或生成草稿。结果只用于帮助用户决定是否把这篇内容作为参考，不代表可以照搬、可以直接发布或内容一定表现良好。
+
 ## 提升为对标内容
 
 ```bash

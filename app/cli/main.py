@@ -7,7 +7,7 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Any, Sequence
 
-from app.analysis import analyze_capture, build_analysis_outcome
+from app.analysis import analyze_capture, assess_account_fit, build_account_fit_summary, build_analysis_outcome
 from app.capture import build_browser_capture_record, build_capture_record
 from app.capture.browser.cdp_client import DEFAULT_CDP_URL, capture_xhs_link_with_browser
 from app.capture.capture_errors import CaptureInputError
@@ -229,6 +229,15 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument("--workspace", required=True, help="Workspace directory.")
     analyze_parser.add_argument("--capture-id", required=True, help="CaptureRecord id.")
     analyze_parser.set_defaults(handler=handle_analyze_captured_post)
+
+    account_fit_parser = subparsers.add_parser(
+        "assess-account-fit",
+        help="Assess one saved post analysis against one explicit creator profile.",
+    )
+    account_fit_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    account_fit_parser.add_argument("--analysis-id", required=True, help="BenchmarkAnalysis id.")
+    account_fit_parser.add_argument("--creator-id", required=True, help="CreatorProfile id.")
+    account_fit_parser.set_defaults(handler=handle_assess_account_fit)
 
     promote_parser = subparsers.add_parser("promote-to-benchmark", help="Promote one analyzed inbox item to benchmark account and post records.")
     promote_parser.add_argument("--workspace", required=True, help="Workspace directory.")
@@ -672,6 +681,28 @@ def handle_analyze_captured_post(args: argparse.Namespace) -> dict[str, Any]:
         "candidate_rule_ids": saved.candidate_rule_ids,
         "uncertainties": saved.uncertainties,
         "analysis_outcome": analysis_outcome,
+    }
+
+
+def handle_assess_account_fit(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    analysis_repo = JsonRepository(workspace, BenchmarkAnalysis)
+    analysis = analysis_repo.read(args.analysis_id)
+    capture = JsonRepository(workspace, CaptureRecord).read(analysis.capture_id)
+    creator = JsonRepository(workspace, CreatorProfile).read(args.creator_id)
+    account_fit = assess_account_fit(capture, analysis, creator)
+    saved = analysis_repo.update(analysis.id, {"account_fit": account_fit})
+    return {
+        "analysis_id": saved.id,
+        "capture_id": capture.id,
+        "account_fit": saved.account_fit,
+        "account_fit_summary": build_account_fit_summary(saved.account_fit),
+        "technical_details": {
+            "source_profile_id": saved.account_fit["source_profile_id"],
+            "source_profile_version": saved.account_fit["source_profile_version"],
+            "active_rule_ids": saved.account_fit["active_rule_ids"],
+        },
     }
 
 
