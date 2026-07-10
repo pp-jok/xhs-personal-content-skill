@@ -92,17 +92,6 @@ def build_assessment(
             confidence="high",
         )
 
-    if has_explicit_style_conflict(capture, element, profile.content_style):
-        return assessment(
-            element=element,
-            classification="adaptable",
-            post_evidence=post_evidence,
-            profile_evidence=profile_evidence,
-            reason="内容方法可参考，但当前表达强度与账号已声明的风格不一致。",
-            adaptation_guidance="保留方法和结构，改为账号现有的克制、具体表达。",
-            confidence="medium",
-        )
-
     if has_explicit_boundary_risk(capture, element, profile.content_style):
         return assessment(
             element=element,
@@ -112,6 +101,17 @@ def build_assessment(
             reason="该元素包含绝对承诺，与账号已声明的克制表达边界不一致。",
             adaptation_guidance="删除绝对承诺，改为可验证的具体说明。",
             confidence="high",
+        )
+
+    if has_explicit_style_conflict(capture, element, profile.content_style):
+        return assessment(
+            element=element,
+            classification="adaptable",
+            post_evidence=post_evidence,
+            profile_evidence=profile_evidence,
+            reason="内容方法可参考，但当前表达强度与账号已声明的风格不一致。",
+            adaptation_guidance="保留方法和结构，改为账号现有的克制、具体表达。",
+            confidence="medium",
         )
 
     if has_format_mismatch(capture, element, profile.content_formats):
@@ -125,14 +125,26 @@ def build_assessment(
             confidence="medium",
         )
 
+    positive_evidence = find_positive_match_evidence(capture, element, profile)
+    if positive_evidence:
+        return assessment(
+            element=element,
+            classification="directly_borrowable",
+            post_evidence=post_evidence,
+            profile_evidence=profile_evidence + positive_evidence,
+            reason=f"{positive_evidence[0]}，可借鉴其结构或方法，不等于照搬原文。",
+            adaptation_guidance="保留已验证的方法，用自己的内容重新表达。",
+            confidence="high",
+        )
+
     return assessment(
         element=element,
-        classification="directly_borrowable",
+        classification="insufficient_information",
         post_evidence=post_evidence,
         profile_evidence=profile_evidence,
-        reason="已有帖子证据与账号资料之间没有发现明确冲突。",
-        adaptation_guidance="可以借鉴结构或方法，不等于照搬原文。",
-        confidence="medium",
+        reason="当前帖子证据和账号资料都存在，但尚没有足够的明确匹配证据证明这一部分适合直接借鉴。",
+        adaptation_guidance="补充与账号受众、主题或目标直接相关的帖子证据后再判断。",
+        confidence="low",
     )
 
 
@@ -194,7 +206,7 @@ def find_forbidden_expression(
 def has_explicit_style_conflict(capture: CaptureRecord, element: str, content_style: list[str]) -> bool:
     if element not in {"选题", "标题", "正文结构"}:
         return False
-    text = f"{capture.title}\n{capture.body}"
+    text = text_for_element(capture, element)
     style_text = " ".join(content_style)
     restrained_style = any(marker in style_text for marker in ("克制", "真诚", "专业", "避免夸张"))
     strong_style = any(marker in text for marker in ("强刺激", "夸张", "煽动"))
@@ -213,8 +225,40 @@ def has_explicit_boundary_risk(capture: CaptureRecord, element: str, content_sty
         return False
     style_text = " ".join(content_style)
     has_boundary = any(marker in style_text for marker in ("克制", "真诚", "专业", "避免夸张"))
-    source_text = capture.title if element == "标题" else f"{capture.title}\n{capture.body}"
+    source_text = text_for_element(capture, element)
     return has_boundary and any(marker in source_text for marker in ("百分之百", "一定", "必然"))
+
+
+def find_positive_match_evidence(
+    capture: CaptureRecord,
+    element: str,
+    profile: CreatorProfile,
+) -> list[str]:
+    if element in {"封面与图片", "视频与视觉", "音频与字幕"}:
+        content_format = {"image": "图文", "video": "视频"}.get(capture.content_type)
+        if content_format and content_format in profile.content_formats:
+            return [f"账号内容形式明确包含：{content_format}"]
+        return []
+
+    if element not in {"选题", "标题", "正文结构", "评论"}:
+        return []
+    source_text = text_for_element(capture, element)
+    candidates = [("目标受众", value) for value in profile.target_audience]
+    candidates.extend(("账号定位", value) for value in profile_field_values(profile, "positioning"))
+    candidates.extend(("运营目标", value) for value in profile.goals)
+    for label, value in candidates:
+        phrase = str(value).strip()
+        if phrase and phrase in source_text:
+            return [f"{label}明确出现：{phrase}"]
+    return []
+
+
+def text_for_element(capture: CaptureRecord, element: str) -> str:
+    if element == "标题":
+        return capture.title
+    if element in {"正文结构", "评论"}:
+        return capture.body
+    return f"{capture.title}\n{capture.body}"
 
 
 def assessment(

@@ -39,6 +39,51 @@ class AccountFitAssessmentTests(unittest.TestCase):
         self.assertNotIn("candidate-rule-hidden", summary)
         self.assertNotIn("rule-", summary)
 
+    def test_unrelated_post_without_explicit_match_is_insufficient_not_directly_borrowable(self) -> None:
+        capture = make_capture(
+            title="周末露营装备推荐",
+            body="介绍帐篷、睡袋和露营灯。",
+        )
+
+        result = assess_account_fit(capture, make_analysis(capture), make_profile())
+        by_element = {item["element"]: item for item in result["assessments"]}
+        summary = build_account_fit_summary(result)
+
+        self.assertEqual(by_element["标题"]["classification"], "insufficient_information")
+        self.assertEqual(by_element["正文结构"]["classification"], "insufficient_information")
+        self.assertFalse(result["decision_readiness"]["can_decide_reference_value"])
+        self.assertNotIn("可借鉴结构或方法", summary)
+
+    def test_explicit_audience_phrase_is_positive_match_evidence(self) -> None:
+        capture = make_capture(
+            title="职场新人如何练习清晰表达",
+            body="为职场新人提供三个可执行的表达练习步骤。",
+        )
+
+        result = assess_account_fit(capture, make_analysis(capture), make_profile())
+        title = next(item for item in result["assessments"] if item["element"] == "标题")
+
+        self.assertEqual(title["classification"], "directly_borrowable")
+        self.assertIn("职场新人", " ".join(title["profile_evidence"]))
+        self.assertIn("职场新人", title["reason"])
+
+    def test_content_format_mismatch_remains_adaptable_with_real_cover_evidence(self) -> None:
+        capture = make_capture(
+            images=[{"content_text": "职场新人表达练习"}],
+            content_type="image",
+        )
+        analysis = make_analysis(capture)
+        analysis.cover_analysis = {
+            "observable": {"content_text": "职场新人表达练习"},
+            "inference": "封面使用明确的人群文案。",
+        }
+        profile = make_profile(content_formats=["视频"])
+
+        result = assess_account_fit(capture, analysis, profile)
+        cover = next(item for item in result["assessments"] if item["element"] == "封面与图片")
+
+        self.assertEqual(cover["classification"], "adaptable")
+
     def test_missing_profile_returns_insufficient_without_inventing_preference(self) -> None:
         result = assess_account_fit(make_capture(), make_analysis(make_capture()), None)
 
@@ -49,7 +94,7 @@ class AccountFitAssessmentTests(unittest.TestCase):
 
     def test_partial_profile_keeps_positioning_judgment_and_marks_style_gap(self) -> None:
         capture = make_capture()
-        profile = make_profile(target_audience=[], content_style=[])
+        profile = make_profile(positioning="职场新人", target_audience=[], content_style=[])
 
         result = assess_account_fit(capture, make_analysis(capture), profile)
 
@@ -146,8 +191,8 @@ def make_capture(**changes: object) -> CaptureRecord:
         "inbox_item_id": "inbox-account-fit",
         "source_url": "https://www.xiaohongshu.com/explore/account-fit",
         "capture_status": "success",
-        "title": "新手如何练习清晰表达",
-        "body": "先说明对象，再给出三个可以当天完成的练习步骤。",
+        "title": "职场新人如何练习清晰表达",
+        "body": "为职场新人先说明对象，再给出三个可以当天完成的练习步骤。",
         "content_type": "image",
         "metrics": {},
     }
