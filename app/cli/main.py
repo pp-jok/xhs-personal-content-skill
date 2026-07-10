@@ -39,7 +39,13 @@ from app.models.core import (
 )
 from app.repositories import VERSIONED_COLLECTIONS, JsonRepository
 from app.quality import build_quality_report
-from app.rules import build_rule_and_evidence_from_analysis, check_rule_relations, select_active_rule_cards
+from app.rules import (
+    CandidateProposalError,
+    build_rule_and_evidence_from_analysis,
+    check_rule_relations,
+    propose_candidate_rules,
+    select_active_rule_cards,
+)
 from app.services.mock_prompt_service import MockPromptService
 from app.services.prompt_contracts import load_contracts
 from app.services.real_sample_validation import RealSampleValidator
@@ -238,6 +244,16 @@ def build_parser() -> argparse.ArgumentParser:
     account_fit_parser.add_argument("--analysis-id", required=True, help="BenchmarkAnalysis id.")
     account_fit_parser.add_argument("--creator-id", required=True, help="CreatorProfile id.")
     account_fit_parser.set_defaults(handler=handle_assess_account_fit)
+
+    proposal_parser = subparsers.add_parser(
+        "propose-candidate-rules",
+        help="Validate and save evidence-grounded candidate rules from structured proposals.",
+    )
+    proposal_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    proposal_parser.add_argument("--analysis-id", required=True, help="Completed BenchmarkAnalysis id.")
+    proposal_parser.add_argument("--creator-id", required=True, help="CreatorProfile used for saved account fit.")
+    proposal_parser.add_argument("--proposals-file", required=True, help="Structured candidate proposal JSON file.")
+    proposal_parser.set_defaults(handler=handle_propose_candidate_rules)
 
     promote_parser = subparsers.add_parser("promote-to-benchmark", help="Promote one analyzed inbox item to benchmark account and post records.")
     promote_parser.add_argument("--workspace", required=True, help="Workspace directory.")
@@ -703,6 +719,46 @@ def handle_assess_account_fit(args: argparse.Namespace) -> dict[str, Any]:
             "source_profile_version": saved.account_fit["source_profile_version"],
             "active_rule_ids": saved.account_fit["active_rule_ids"],
         },
+    }
+
+
+def handle_propose_candidate_rules(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    try:
+        payload = read_json_object(Path(args.proposals_file), "candidate proposals")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CandidateProposalError("无法读取结构化规则提案，请检查文件后重试。") from exc
+    try:
+        analysis = JsonRepository(workspace, BenchmarkAnalysis).read(args.analysis_id)
+        capture = JsonRepository(workspace, CaptureRecord).read(analysis.capture_id)
+        profile = JsonRepository(workspace, CreatorProfile).read(args.creator_id)
+    except FileNotFoundError as exc:
+        raise CandidateProposalError("未找到完成分析、对应内容或指定账号档案，暂不能提炼候选规则。") from exc
+    result = propose_candidate_rules(
+        capture=capture,
+        analysis=analysis,
+        profile=profile,
+        proposal_payload=payload,
+        existing_rules=JsonRepository(workspace, RuleCard).list_all(),
+        existing_evidence=JsonRepository(workspace, RuleEvidence).list_all(),
+    )
+
+    rule_repo = JsonRepository(workspace, RuleCard)
+    evidence_repo = JsonRepository(workspace, RuleEvidence)
+    for rule in result["created_rules"]:
+        rule_repo.create(rule)
+    for evidence in result["created_evidence"]:
+        evidence_repo.create(evidence)
+    for provenance in result["created_provenance"]:
+        save_provenance_record(workspace, provenance, upsert=False)
+
+    proposal_results = result["proposal_results"]
+    return {
+        "candidate_rule_summary": result["user_summary"],
+        "created_count": len(result["created_rules"]),
+        "duplicate_count": sum(item["outcome"] == "duplicate" for item in proposal_results),
+        "rejected_count": sum(item["outcome"] == "rejected" for item in proposal_results),
     }
 
 
