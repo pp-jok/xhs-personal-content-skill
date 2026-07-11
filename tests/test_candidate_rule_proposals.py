@@ -7,7 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.models.core import BenchmarkAnalysis, CaptureRecord, CreatorProfile, RuleCard  # noqa: E402
-from app.rules.candidate_proposals import CandidateProposalError, propose_candidate_rules  # noqa: E402
+from app.rules.candidate_proposals import CandidateProposalError, propose_candidate_rules, validate_proposal_payload  # noqa: E402
 from app.rules.selection import select_active_rule_cards  # noqa: E402
 
 
@@ -157,8 +157,11 @@ class CandidateRuleProposalTests(unittest.TestCase):
 
     def test_adaptable_allows_change_when_a_boundary_is_present(self) -> None:
         capture, analysis, profile = make_ready_records(classification="adaptable")
+        guidance = "标题改为更具体的人群和问题描述。"
+        analysis.account_fit["assessments"][0]["adaptation_guidance"] = guidance
         payload = valid_payload()
-        payload["proposals"][0]["rule_text"] = "标题改为更具体的人群和问题描述。"
+        payload["proposals"][0]["rule_text"] = guidance
+        payload["proposals"][0]["account_fit_basis"] = [guidance]
 
         result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
 
@@ -279,6 +282,111 @@ class CandidateRuleProposalTests(unittest.TestCase):
         self.assertEqual(result["proposal_results"][0]["outcome"], "rejected")
         self.assertEqual(result["proposal_results"][1]["outcome"], "created")
         self.assertEqual(len(result["created_rules"]), 1)
+
+    def test_evidence_requires_a_specific_contiguous_saved_fragment(self) -> None:
+        capture, analysis, profile = make_ready_records()
+        for observable_fact in ("人", "新人", "汇报", "123456", "！！！", capture.title + "，因此适用于所有职场账号"):
+            payload = valid_payload()
+            payload["proposals"][0]["evidence"][0]["observable_fact"] = observable_fact
+            result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
+            self.assertEqual(result["proposal_results"][0]["outcome"], "rejected", observable_fact)
+            self.assertEqual(result["created_rules"], [], observable_fact)
+
+        payload = valid_payload()
+        payload["proposals"][0]["evidence"][0]["observable_fact"] = "职场新人如何准备第一次工作"
+        self.assertEqual(propose_candidate_rules(capture, analysis, profile, payload, [], []) ["proposal_results"][0]["outcome"], "created")
+
+        payload = valid_payload()
+        payload["proposals"][0]["evidence"][0]["observable_fact"] = "职场新人如何准备工作汇报"
+        self.assertEqual(propose_candidate_rules(capture, analysis, profile, payload, [], []) ["proposal_results"][0]["outcome"], "rejected")
+
+    def test_account_fit_basis_requires_specific_used_assessment_text(self) -> None:
+        capture, analysis, profile = make_ready_records()
+        for basis in ("人", "账号", "标题", "适配", "目标受众明确出现：职场新人，因此适用于所有职场账号"):
+            payload = valid_payload()
+            payload["proposals"][0]["account_fit_basis"] = [basis]
+            result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
+            self.assertEqual(result["proposal_results"][0]["outcome"], "rejected", basis)
+
+        analysis.account_fit["assessments"].append(make_assessment("正文结构", "directly_borrowable", capture.body))
+        payload = valid_payload()
+        payload["proposals"][0]["account_fit_basis"] = ["正文结构专用的改造建议。"]
+        analysis.account_fit["assessments"][1]["adaptation_guidance"] = "正文结构专用的改造建议。"
+        result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
+        self.assertEqual(result["proposal_results"][0]["outcome"], "rejected")
+
+    def test_risky_rules_reject_ambiguous_direction_reversals(self) -> None:
+        for rule_text in ("不要避免使用绝对承诺", "风险可控，应使用绝对承诺", "虽然有风险，但仍应使用绝对承诺"):
+            capture, analysis, profile = make_ready_records(classification="risky")
+            payload = valid_payload()
+            payload["proposals"][0]["rule_text"] = rule_text
+            payload["proposals"][0]["risk_notes"] = ["绝对承诺与账号边界不一致"]
+            result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
+            self.assertEqual(result["proposal_results"][0]["outcome"], "rejected", rule_text)
+
+        for rule_text in ("避免使用绝对承诺", "不要使用绝对承诺", "禁止使用绝对承诺"):
+            capture, analysis, profile = make_ready_records(classification="risky")
+            payload = valid_payload()
+            payload["proposals"][0]["rule_text"] = rule_text
+            payload["proposals"][0]["risk_notes"] = ["绝对承诺与账号边界不一致"]
+            self.assertEqual(propose_candidate_rules(capture, analysis, profile, payload, [], []) ["proposal_results"][0]["outcome"], "created", rule_text)
+
+    def test_adaptable_proposal_requires_a_saved_adaptation_guidance_match(self) -> None:
+        capture, analysis, profile = make_ready_records(classification="adaptable")
+        guidance = "标题改为更具体的人群和问题描述。"
+        analysis.account_fit["assessments"][0]["adaptation_guidance"] = guidance
+        payload = valid_payload()
+        payload["proposals"][0]["rule_text"] = guidance
+        payload["proposals"][0]["account_fit_basis"] = [guidance]
+        self.assertEqual(propose_candidate_rules(capture, analysis, profile, payload, [], []) ["proposal_results"][0]["outcome"], "created")
+
+        payload = valid_payload()
+        payload["proposals"][0]["account_fit_basis"] = [guidance]
+        payload["proposals"][0]["limitations"] = ["发布前检查"]
+        result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
+        self.assertEqual(result["proposal_results"][0]["outcome"], "rejected")
+
+    def test_duplicate_evidence_is_a_contract_error(self) -> None:
+        payload = valid_payload()
+        evidence = payload["proposals"][0]["evidence"][0]
+        payload["proposals"][0]["evidence"] = [evidence, deepcopy(evidence)]
+        with self.assertRaisesRegex(CandidateProposalError, "不能重复提交相同帖子证据"):
+            validate_proposal_payload(payload)
+
+        payload = valid_payload()
+        duplicate = deepcopy(payload["proposals"][0]["evidence"][0])
+        duplicate["observable_fact"] += "  "
+        payload["proposals"][0]["evidence"] = [payload["proposals"][0]["evidence"][0], duplicate]
+        with self.assertRaisesRegex(CandidateProposalError, "不能重复提交相同帖子证据"):
+            validate_proposal_payload(payload)
+
+    def test_summary_keeps_verified_basis_limits_risks_and_history_warning(self) -> None:
+        for status, warning in (("rejected", "相同规则曾被拒绝"), ("deprecated", "相同规则曾被废弃")):
+            capture, analysis, profile = make_ready_records()
+            payload = valid_payload()
+            payload["proposals"][0]["risk_notes"] = ["避免把单篇样本当作确定结论"]
+            existing = make_rule(summary=payload["proposals"][0]["rule_text"], status=status)
+            summary = propose_candidate_rules(capture, analysis, profile, payload, [existing], [])["user_summary"]
+
+            for expected in (
+                "目标受众明确出现：职场新人",
+                "单篇帖子证据，仍需更多样本验证",
+                "避免把单篇样本当作确定结论",
+                warning,
+            ):
+                self.assertIn(expected, summary)
+            for forbidden in ("rule-", "evidence-", "provenance-", "analysis-proposal", "creator-main"):
+                self.assertNotIn(forbidden, summary)
+
+    def test_negative_video_scope_is_not_a_video_format_requirement(self) -> None:
+        capture, analysis, profile = make_ready_records()
+        payload = valid_payload()
+        payload["proposals"][0]["scope"] = ["不要使用视频"]
+        self.assertEqual(propose_candidate_rules(capture, analysis, profile, payload, [], []) ["proposal_results"][0]["outcome"], "created")
+
+        payload = valid_payload()
+        payload["proposals"][0]["scope"] = ["采用视频形式"]
+        self.assertEqual(propose_candidate_rules(capture, analysis, profile, payload, [], []) ["proposal_results"][0]["outcome"], "rejected")
 
 
 def make_ready_records(classification: str = "directly_borrowable") -> tuple[CaptureRecord, BenchmarkAnalysis, CreatorProfile]:

@@ -27,6 +27,11 @@ NON_COMMENT_DIMENSIONS = {"选题", "标题", "正文结构", "封面与图片",
 NEGATIVE_MARKERS = ("避免", "不要", "不使用", "禁止", "风险", "不建议", "不应", "不能", "删除")
 POSITIVE_MARKERS = ("使用", "采用", "保留", "增加", "强化", "突出", "照搬")
 PUNCTUATION = re.compile(r"[\s\.,;:!?，。；：！？、()（）\[\]【】'\"“”‘’<>《》]", re.UNICODE)
+GENERIC_TEXT_FRAGMENTS = {"人", "新人", "新手", "标题", "正文", "内容", "结构", "方法", "汇报", "表达", "账号", "用户", "视频", "图片", "评论", "适配"}
+AMBIGUOUS_DIRECTION_PATTERNS = ("不要避免", "不应禁止", "并非不建议", "不建议避免", "不能不使用")
+EXPLICIT_NEGATIVE_PATTERNS = ("避免使用", "不要使用", "禁止使用", "不建议使用", "不应使用", "不能使用", "避免采用", "不要采用", "禁止采用", "不建议采用", "不应采用", "不能采用", "避免照搬", "不要照搬", "禁止照搬", "不建议照搬", "不应照搬", "不能照搬", "删除", "存在风险，应避免")
+VIDEO_REQUIREMENT_PATTERNS = ("使用视频", "采用视频", "视频形式", "视频内容", "制作视频", "以视频呈现", "需要视频")
+VIDEO_NEGATION_PATTERNS = ("不要使用视频", "避免视频", "非视频", "无需视频")
 
 
 class CandidateProposalError(ValueError):
@@ -75,7 +80,7 @@ def propose_candidate_rules(
         result["created_rules"].append(rule)
         result["created_evidence"].extend(evidence)
         result["created_provenance"].extend(provenance)
-        result["proposal_results"].append(proposal_result(index, "created", rule=rule, warnings=warnings))
+        result["proposal_results"].append(proposal_result(index, "created", rule=rule, proposal=proposal, warnings=warnings))
         rules_for_deduplication.append(rule)
 
     result["user_summary"] = build_candidate_rule_summary(result)
@@ -105,11 +110,16 @@ def validate_proposal_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
         evidence = proposal["evidence"]
         if not isinstance(evidence, list) or not 1 <= len(evidence) <= 3:
             raise CandidateProposalError("每条规则需要 1 到 3 条帖子证据。")
+        seen_evidence: set[tuple[str, str]] = set()
         for item in evidence:
             if not isinstance(item, dict) or set(item) != {"dimension", "observable_fact"}:
                 raise CandidateProposalError("帖子证据必须包含维度和可见事实。")
             if not text(item["dimension"]) or not text(item["observable_fact"]):
                 raise CandidateProposalError("帖子证据不能为空。")
+            evidence_key = (normalize_text(item["dimension"]), normalize_text(item["observable_fact"]))
+            if evidence_key in seen_evidence:
+                raise CandidateProposalError("同一条规则提案中不能重复提交相同帖子证据。")
+            seen_evidence.add(evidence_key)
         validated.append(proposal)
     return validated
 
@@ -174,15 +184,15 @@ def validate_proposal_evidence(
 
 
 def validate_classification_direction(proposal: dict[str, Any], assessments: dict[str, dict[str, Any]]) -> None:
-    classifications = {assessments[str(item["dimension"])]["classification"] for item in proposal["evidence"]}
+    used_assessments = [assessments[str(item["dimension"])] for item in proposal["evidence"]]
+    classifications = {item["classification"] for item in used_assessments}
     rule_text = str(proposal["rule_text"])
-    negative = is_negative_rule(rule_text, proposal["risk_notes"])
-    positive = is_explicitly_positive_rule(rule_text)
-    if "adaptable" in classifications and not has_adaptation_boundary(proposal):
+    direction = classify_rule_direction(rule_text, proposal["risk_notes"])
+    if "adaptable" in classifications and not has_adaptation_boundary(proposal, used_assessments):
         raise CandidateProposalError("需要改造的内容必须说明调整边界，不能作为无条件规则保存。")
-    if "not_recommended" in classifications and (not negative or positive or not proposal["risk_notes"]):
+    if "not_recommended" in classifications and (direction != "negative" or not proposal["risk_notes"]):
         raise CandidateProposalError("不建议直接使用的内容只能形成禁止或边界规则。")
-    if "risky" in classifications and (not negative or positive):
+    if "risky" in classifications and direction != "negative":
         raise CandidateProposalError("存在风险的内容只能形成风险提醒或避免规则。")
 
 
@@ -315,8 +325,29 @@ def empty_result(analysis: BenchmarkAnalysis) -> dict[str, Any]:
     }
 
 
-def proposal_result(index: int, outcome: str, rule: RuleCard | None = None, reasons: list[str] | None = None, warnings: list[str] | None = None) -> dict[str, Any]:
-    return {"index": index, "outcome": outcome, "rule": rule, "duplicate_rule_id": "", "reasons": reasons or [], "warnings": warnings or []}
+def proposal_result(
+    index: int,
+    outcome: str,
+    rule: RuleCard | None = None,
+    proposal: dict[str, Any] | None = None,
+    reasons: list[str] | None = None,
+    warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    display = {
+        "account_fit_basis": list(proposal["account_fit_basis"]),
+        "not_applicable_when": list(proposal["not_applicable_when"]),
+        "limitations": list(proposal["limitations"]),
+        "risk_notes": list(proposal["risk_notes"]),
+    } if proposal else {}
+    return {
+        "index": index,
+        "outcome": outcome,
+        "rule": rule,
+        "duplicate_rule_id": "",
+        "display": display,
+        "reasons": reasons or [],
+        "warnings": warnings or [],
+    }
 
 
 def build_candidate_rule_summary(result: dict[str, Any]) -> str:
@@ -327,18 +358,21 @@ def build_candidate_rule_summary(result: dict[str, Any]) -> str:
         for position, item in enumerate(created, start=1):
             rule = item["rule"]
             assert isinstance(rule, RuleCard)
+            display = item["display"]
+            limits = unique_texts(display["limitations"] + display["risk_notes"])
+            relationship = "；".join(item["warnings"]) or "已完成精确重复和账号明确边界检查；近似或语义冲突仍需人工确认。"
             sections.append(
                 "\n".join(
                     [
                         f"候选规则 {position}",
                         f"规则：{rule.rule_summary}",
                         f"适用于：{'、'.join(rule.applicable_scenarios) or '当前已验证场景'}",
-                        f"暂不适用于：{adaptation_exclusions(rule.adaptation_notes)}",
+                        f"暂不适用于：{'、'.join(display['not_applicable_when']) or adaptation_exclusions(rule.adaptation_notes)}",
                         "为什么提出：已有帖子证据与账号适配判断支持。",
                         f"帖子证据：{'；'.join(rule.examples)}",
-                        "账号适配依据：已通过当前账号资料核对。",
-                        f"风险或限制：{'；'.join(rule.risks) if rule.risks else '单篇内容形成，仍需更多样本验证。'}",
-                        "与现有规则的关系：已完成精确重复和账号明确边界检查；近似或语义冲突仍需人工确认。",
+                        "账号适配依据：\n" + "\n".join(f"- {basis}" for basis in display["account_fit_basis"]),
+                        f"风险或限制：{'；'.join(limits) if limits else '单篇内容形成，仍需更多样本验证。'}",
+                        f"与现有规则的关系：{relationship}",
                         "当前状态：待确认",
                     ]
                 )
@@ -355,7 +389,7 @@ def build_candidate_rule_summary(result: dict[str, Any]) -> str:
 
 
 def matches_observed_evidence(value: str, values: list[Any]) -> bool:
-    return any(value == str(item).strip() or value in str(item) or str(item) in value for item in values if text(item))
+    return matches_saved_text_fragment(value, values, minimum_length=6)
 
 
 def basis_matches_assessments(basis: list[str], assessments: list[dict[str, Any]]) -> bool:
@@ -363,7 +397,20 @@ def basis_matches_assessments(basis: list[str], assessments: list[dict[str, Any]
     for assessment in assessments:
         sources.extend([assessment.get("reason", ""), assessment.get("adaptation_guidance", "")])
         sources.extend(assessment.get("profile_evidence", []))
-    return bool(basis) and all(any(item == str(source).strip() or item in str(source) for source in sources if text(source)) for item in basis)
+    return bool(basis) and all(matches_saved_text_fragment(item, sources, minimum_length=6) for item in basis)
+
+
+def matches_saved_text_fragment(proposed: str, saved_values: list[Any], *, minimum_length: int) -> bool:
+    candidate = proposed.strip()
+    effective = PUNCTUATION.sub("", candidate)
+    if not effective or effective.isdigit() or effective in GENERIC_TEXT_FRAGMENTS:
+        return False
+    if effective.isascii() and effective.isalnum():
+        if len(effective) < 12:
+            return False
+    elif len(effective) < minimum_length:
+        return False
+    return any(candidate == str(saved).strip() or candidate in str(saved).strip() for saved in saved_values if text(saved))
 
 
 def expected_dimensions_for_type(rule_type: str) -> set[str]:
@@ -377,28 +424,48 @@ def expected_dimensions_for_type(rule_type: str) -> set[str]:
     }.get(rule_type, set())
 
 
-def has_adaptation_boundary(proposal: dict[str, Any]) -> bool:
-    if proposal["limitations"] or proposal["not_applicable_when"]:
-        return True
-    return any(any(marker in basis for marker in ("调整", "改写", "避免", "不照搬", "边界")) for basis in proposal["account_fit_basis"])
+def has_adaptation_boundary(proposal: dict[str, Any], assessments: list[dict[str, Any]]) -> bool:
+    guidance = [str(item.get("adaptation_guidance", "")) for item in assessments if text(item.get("adaptation_guidance", ""))]
+    if not guidance:
+        return False
+    has_guidance_basis = any(matches_saved_text_fragment(basis, guidance, minimum_length=6) for basis in proposal["account_fit_basis"])
+    boundary_values = proposal["limitations"] + proposal["not_applicable_when"] + [str(proposal["rule_text"])]
+    return has_guidance_basis and any(matches_saved_text_fragment(value, guidance, minimum_length=6) for value in boundary_values)
 
 
 def is_negative_rule(rule_text: str, risks: list[str]) -> bool:
-    if is_explicitly_positive_rule(rule_text):
-        return False
-    return has_negative_marker(rule_text) or any(has_negative_marker(risk) for risk in risks)
+    return classify_rule_direction(rule_text, risks) == "negative"
 
 
 def is_explicitly_positive_rule(rule_text: str) -> bool:
-    return not has_negative_marker(rule_text) and any(marker in rule_text for marker in POSITIVE_MARKERS)
+    return classify_rule_direction(rule_text, []) == "positive"
 
 
 def has_negative_marker(value: str) -> bool:
     return any(marker in value for marker in NEGATIVE_MARKERS)
 
 
+def classify_rule_direction(rule_text: str, risk_notes: list[str]) -> str:
+    del risk_notes  # Risk notes explain the boundary; rule text determines the proposed direction.
+    normalized = re.sub(r"\s+", "", rule_text)
+    if any(pattern in normalized for pattern in AMBIGUOUS_DIRECTION_PATTERNS):
+        return "ambiguous"
+    has_positive_action = any(marker in normalized for marker in POSITIVE_MARKERS + ("应该", "应当", "推荐"))
+    if ("风险" in normalized and has_positive_action) or (any(marker in normalized for marker in ("但", "但是", "不过", "然而", "仍", "仍然", "可控")) and has_positive_action and has_negative_marker(normalized)):
+        return "ambiguous"
+    if any(pattern in normalized for pattern in EXPLICIT_NEGATIVE_PATTERNS):
+        return "negative"
+    return "positive"
+
+
 def requires_video(proposal: dict[str, Any]) -> bool:
-    return any("视频" in value for value in proposal["scope"] + proposal["applicable_when"])
+    for value in proposal["scope"] + proposal["applicable_when"]:
+        normalized = re.sub(r"\s+", "", value)
+        if any(pattern in normalized for pattern in VIDEO_NEGATION_PATTERNS):
+            continue
+        if any(pattern in normalized for pattern in VIDEO_REQUIREMENT_PATTERNS):
+            return True
+    return False
 
 
 def duplicate_key(rule_text: str, rule_type: str, scope: list[str]) -> tuple[str, str, tuple[str, ...]]:
