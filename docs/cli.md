@@ -287,7 +287,7 @@ python3 -m app.cli.main add-feedback \
 ```
 
 ```bash
-python3 -m app.cli.main show-generation-context \
+python3 -m app.cli show-generation-context \
   --workspace .xhs-personal-content-skill/real-sample \
   --profile-id creator-main \
   --intent "准备后续选题" \

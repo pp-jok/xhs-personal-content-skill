@@ -122,6 +122,90 @@ class GenerationContextTests(unittest.TestCase):
         self.assertEqual(context.excluded_rules[0]["reason_code"], "awaiting_user_confirmation")
         self.assertEqual(context.status_category, "limited")
 
+    def test_marks_different_profile_alignment_as_limited(self) -> None:
+        profile = self._profile()
+        rule = make_rule("rule-different-profile", "approved", "标题贴近具体人群")
+        context = build_generation_context(
+            profile=profile,
+            rules=[rule],
+            evidence=[make_evidence("evidence-different-profile", rule.id, "标题点名具体人群。")],
+            provenance=[make_profile_provenance("provenance-different-profile", rule.id, "other-profile", 1)],
+            decisions=[make_confirmed_decision("decision-different-profile", rule.id)],
+            task_constraints=GenerationTaskConstraints(),
+        )
+
+        self.assertEqual(context.status_category, "limited")
+        self.assertEqual(context.usable_rules[0]["profile_alignment"], "different_profile")
+        self.assertIn("该规则来源于其他账号档案", context.usable_rules[0]["warnings"])
+        self.assertIn("规则「标题贴近具体人群」来源于其他账号档案", context.missing_information)
+
+    def test_marks_missing_profile_provenance_as_limited(self) -> None:
+        profile = self._profile()
+        rule = make_rule("rule-missing-provenance", "approved", "标题使用真实经历")
+        context = build_generation_context(
+            profile=profile,
+            rules=[rule],
+            evidence=[make_evidence("evidence-missing-provenance", rule.id, "标题来自真实经历。")],
+            provenance=[],
+            decisions=[make_confirmed_decision("decision-missing-provenance", rule.id)],
+            task_constraints=GenerationTaskConstraints(),
+        )
+
+        self.assertEqual(context.status_category, "limited")
+        self.assertEqual(context.usable_rules[0]["profile_alignment"], "missing")
+        self.assertIn("当前规则没有可验证的账号档案来源", context.usable_rules[0]["warnings"])
+        self.assertIn("规则「标题使用真实经历」缺少账号档案来源记录", context.missing_information)
+
+    def test_no_usable_rules_is_limited(self) -> None:
+        profile = self._profile()
+        context = build_generation_context(
+            profile=profile,
+            rules=[make_rule("rule-rejected-only", "rejected", "不再使用的标题规则")],
+            evidence=[],
+            provenance=[],
+            decisions=[],
+            task_constraints=GenerationTaskConstraints(),
+        )
+
+        self.assertEqual(context.status_category, "limited")
+        self.assertEqual(context.usable_rules, [])
+        self.assertEqual(context.excluded_rules[0]["reason_code"], "rejected_by_lifecycle")
+        self.assertIn("当前没有可用规则", context.risk_warnings)
+        self.assertIn("没有可用规则", context.missing_information)
+
+    def test_lifecycle_approved_rule_without_decision_keeps_explicit_basis(self) -> None:
+        profile = self._profile()
+        rule = make_rule("rule-lifecycle-approved", "approved", "标题给出明确场景")
+        context = build_generation_context(
+            profile=profile,
+            rules=[rule],
+            evidence=[make_evidence("evidence-lifecycle-approved", rule.id, "标题给出明确场景。")],
+            provenance=[make_profile_provenance("provenance-lifecycle-approved", rule.id, profile.id, profile.version)],
+            decisions=[],
+            task_constraints=GenerationTaskConstraints(),
+        )
+
+        self.assertEqual(context.status_category, "ready")
+        self.assertEqual(context.usable_rules[0]["decision_basis"], "lifecycle_approved_without_decision")
+        self.assertEqual(context.usable_rules[0]["profile_alignment"], "matched")
+
+    def test_active_rule_with_pending_decision_adds_warning_without_excluding_rule(self) -> None:
+        profile = self._profile()
+        rule = make_rule("rule-pending-decision", "approved", "标题保留口语表达")
+        context = build_generation_context(
+            profile=profile,
+            rules=[rule],
+            evidence=[make_evidence("evidence-pending-decision", rule.id, "标题保留口语表达。")],
+            provenance=[make_profile_provenance("provenance-pending-decision", rule.id, profile.id, profile.version)],
+            decisions=[make_pending_decision("decision-pending", rule.id)],
+            task_constraints=GenerationTaskConstraints(),
+        )
+
+        self.assertEqual(context.status_category, "ready")
+        self.assertEqual([item["rule_id"] for item in context.usable_rules], [rule.id])
+        self.assertIn("该规则仍关联未完成的待决记录", context.usable_rules[0]["warnings"])
+        self.assertIn("该规则仍关联未完成的待决记录", context.risk_warnings)
+
     def test_task_constraints_trim_deduplicate_and_do_not_infer_defaults(self) -> None:
         constraints = GenerationTaskConstraints.from_cli_values(
             intent=" 准备选题 ",
