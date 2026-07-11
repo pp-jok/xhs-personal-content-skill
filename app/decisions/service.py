@@ -256,6 +256,14 @@ def validate_resolve_request(
         item.id != decision.id
         and item.target_object_type == "rule_card"
         and item.target_object_id == rule.id
+        and item.status == "pending"
+        for item in related_decisions
+    ):
+        raise CandidateRuleDecisionError("这条候选规则存在多个待处理决定，需要先由技术流程清理后再继续。")
+    if any(
+        item.id != decision.id
+        and item.target_object_type == "rule_card"
+        and item.target_object_id == rule.id
         and item.status in {"confirmed", "rejected"}
         for item in related_decisions
     ):

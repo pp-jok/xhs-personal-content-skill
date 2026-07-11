@@ -478,11 +478,7 @@ def handle_resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
                 changed_by="user",
                 change_note="user resolved candidate rule decision",
             ),
-            lambda item: rule_repo.upsert(
-                item,
-                changed_by="system",
-                change_note="restore after decision save failure",
-            ),
+            lambda item: restore_rule_card_exact(workspace, item),
         )
         return {
             "decision_id": persisted.decision.id,
@@ -1296,6 +1292,21 @@ def update_rule_status(
 ) -> RuleCard:
     ensure_workspace_dirs(workspace)
     return JsonRepository(workspace, RuleCard).update(rule_id, changes, changed_by=changed_by, change_note=change_note)
+
+
+def restore_rule_card_exact(workspace: Path, rule: RuleCard) -> RuleCard:
+    """Restore the pre-resolution rule without creating another version snapshot."""
+    ensure_workspace_dirs(workspace)
+    if "/" in rule.id or "\\" in rule.id:
+        raise ValueError("rule id cannot contain path separators")
+    rule.validate()
+    path = workspace / RuleCard.collection_name / f"{rule.id}.json"
+    temporary_path = path.with_name(f".{path.name}.restore")
+    with temporary_path.open("w", encoding="utf-8") as file:
+        json.dump(rule.to_dict(), file, ensure_ascii=False, indent=2)
+        file.write("\n")
+    temporary_path.replace(path)
+    return rule
 
 
 def summarize_rule(rule: RuleCard) -> dict[str, Any]:

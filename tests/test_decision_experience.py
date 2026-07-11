@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
@@ -17,7 +18,9 @@ from app.decisions import (  # noqa: E402
     persist_candidate_rule_decision_resolution,
     resolve_candidate_rule_decision,
 )
+from app.cli.main import restore_rule_card_exact  # noqa: E402
 from app.models.core import DecisionRequest, RuleCard, ValidationError  # noqa: E402
+from app.repositories import JsonRepository  # noqa: E402
 from app.rules.selection import select_active_rule_cards  # noqa: E402
 
 
@@ -168,6 +171,25 @@ class CandidateRuleDecisionTests(unittest.TestCase):
         with self.assertRaisesRegex(CandidateRuleDecisionError, "另一项已完成决定"):
             resolve_candidate_rule_decision(decision, rule, "确认使用", "", [decision, old])
 
+    def test_resolve_rejects_any_of_two_pending_decisions_without_writes(self) -> None:
+        rule = make_candidate_rule()
+        first = make_decision(rule, question="第一个决定")
+        second = make_decision(rule, question="第二个决定")
+        second.id = "decision-second"
+
+        for decision in (first, second):
+            with self.subTest(decision=decision.id), self.assertRaisesRegex(
+                CandidateRuleDecisionError, "多个待处理决定"
+            ):
+                resolve_candidate_rule_decision(decision, rule, "确认使用", "", [first, second])
+
+        self.assertEqual(rule.status, "candidate")
+        for decision in (first, second):
+            self.assertEqual(decision.status, "pending")
+            self.assertEqual(decision.selected_option, "")
+            self.assertIsNone(decision.resolved_by)
+            self.assertIsNone(decision.resolved_at)
+
     def test_resolution_compensates_when_decision_save_fails(self) -> None:
         rule = make_candidate_rule()
         decision = make_decision(rule)
@@ -182,6 +204,22 @@ class CandidateRuleDecisionTests(unittest.TestCase):
         save_rule.assert_called_once_with(result.rule)
         restore_rule.assert_called_once_with(rule)
 
+    def test_resolution_does_not_save_decision_when_rule_save_fails(self) -> None:
+        rule = make_candidate_rule()
+        decision = make_decision(rule)
+        result = resolve_candidate_rule_decision(decision, rule, "确认使用", "", [decision])
+        save_decision = Mock()
+
+        with self.assertRaisesRegex(CandidateRuleDecisionError, "规则状态保存失败"):
+            persist_candidate_rule_decision_resolution(
+                result,
+                Mock(side_effect=OSError("rule write failed")),
+                save_decision,
+                Mock(),
+            )
+
+        save_decision.assert_not_called()
+
     def test_resolution_reports_inconsistency_when_compensation_fails(self) -> None:
         rule = make_candidate_rule()
         decision = make_decision(rule)
@@ -194,6 +232,28 @@ class CandidateRuleDecisionTests(unittest.TestCase):
                 Mock(side_effect=OSError("decision write failed")),
                 Mock(side_effect=OSError("restore failed")),
             )
+
+    def test_resolution_restores_exact_rule_after_second_write_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            rule = make_candidate_rule()
+            decision = make_decision(rule)
+            rule_repo = JsonRepository(workspace, RuleCard)
+            decision_repo = JsonRepository(workspace, DecisionRequest)
+            rule_repo.create(rule)
+            decision_repo.create(decision)
+            result = resolve_candidate_rule_decision(decision, rule, "确认使用", "", [decision])
+
+            with self.assertRaisesRegex(CandidateRuleDecisionError, "本次未完成"):
+                persist_candidate_rule_decision_resolution(
+                    result,
+                    lambda item: rule_repo.upsert(item, changed_by="user"),
+                    lambda item: (_ for _ in ()).throw(OSError("decision write failed")),
+                    lambda item: restore_rule_card_exact(workspace, item),
+                )
+
+            self.assertEqual(rule_repo.read(rule.id).to_dict(), rule.to_dict())
+            self.assertEqual(decision_repo.read(decision.id).status, "pending")
 
 
 def make_candidate_rule(rule_id: str = "rule-candidate") -> RuleCard:

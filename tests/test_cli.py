@@ -651,6 +651,62 @@ class CliTests(unittest.TestCase):
             self.assertIn("状态已发生变化", resolved["error"])
             self.assertEqual(JsonRepository(workspace, DecisionRequest).read(created["result"]["decision_id"]).status, "pending")
 
+    def test_candidate_rule_decision_rejects_multiple_pending_records_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            rule = RuleCard(
+                id="rule-conflicting-decisions",
+                name="候选规则",
+                type="title",
+                source_ids=["analysis-001"],
+                applicable_scenarios=["标题"],
+                rule_summary="标题先说明对象。",
+                examples=["职场新人如何汇报"],
+                risks=["单篇内容形成"],
+                adaptation_notes="需要更多样本。",
+                status="candidate",
+            )
+            JsonRepository(workspace, RuleCard).create(rule)
+            decisions = JsonRepository(workspace, DecisionRequest)
+            for decision_id, question in (("decision-conflict-first", "第一个决定"), ("decision-conflict-second", "第二个决定")):
+                decisions.create(
+                    DecisionRequest(
+                        id=decision_id,
+                        target_object_type="rule_card",
+                        target_object_id=rule.id,
+                        question=question,
+                        options=["确认使用", "暂不使用"],
+                        option_outcomes={"确认使用": "confirmed", "暂不使用": "rejected"},
+                        recommendation="暂不使用",
+                        recommendation_reason="有限证据。",
+                        impact="确认或拒绝。",
+                        expected_target_version=rule.version,
+                        created_by="codex",
+                    )
+                )
+
+            for decision_id in ("decision-conflict-first", "decision-conflict-second"):
+                resolved = self._run_cli(
+                    [
+                        "resolve-decision",
+                        "--workspace",
+                        temp_dir,
+                        "--decision-id",
+                        decision_id,
+                        "--selected-option",
+                        "确认使用",
+                    ],
+                    expected_code=1,
+                )
+                self.assertIn("多个待处理决定", resolved["error"])
+
+            self.assertEqual(JsonRepository(workspace, RuleCard).read(rule.id).status, "candidate")
+            for decision in decisions.list_all():
+                self.assertEqual(decision.status, "pending")
+                self.assertEqual(decision.selected_option, "")
+                self.assertIsNone(decision.resolved_by)
+                self.assertIsNone(decision.resolved_at)
+
     def test_decision_cli_uses_explicit_outcome_mapping_for_chinese_labels(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
