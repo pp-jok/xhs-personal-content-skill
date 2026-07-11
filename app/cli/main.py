@@ -20,6 +20,7 @@ from app.decisions import (
     persist_candidate_rule_decision_resolution,
     resolve_candidate_rule_decision,
 )
+from app.generation import GenerationTaskConstraints, build_generation_context
 from app.models.core import (
     MODEL_TYPES,
     Actor,
@@ -192,6 +193,24 @@ def build_parser() -> argparse.ArgumentParser:
     user_context_parser.add_argument("--collection", choices=sorted(MODEL_TYPES), required=True, help="Collection name.")
     user_context_parser.add_argument("--record-id", required=True, help="Record id.")
     user_context_parser.set_defaults(handler=handle_show_user_context)
+
+    generation_context_parser = subparsers.add_parser(
+        "show-generation-context",
+        help="Show a read-only central generation context for one explicit creator profile.",
+    )
+    generation_context_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    generation_context_parser.add_argument("--profile-id", required=True, help="CreatorProfile id.")
+    generation_context_parser.add_argument("--intent", default="", help="Current generation intent.")
+    generation_context_parser.add_argument("--content-type", default="", help="Requested content type.")
+    generation_context_parser.add_argument("--topic-area", default="", help="Requested topic area.")
+    generation_context_parser.add_argument("--target-audience", action="append", default=[], help="Target audience, repeatable.")
+    generation_context_parser.add_argument("--format", default="", help="Requested content format.")
+    generation_context_parser.add_argument("--tone", default="", help="Requested tone.")
+    generation_context_parser.add_argument("--length", default="", help="Requested length.")
+    generation_context_parser.add_argument("--do", action="append", default=[], help="Required action, repeatable.")
+    generation_context_parser.add_argument("--dont", action="append", default=[], help="Avoidance constraint, repeatable.")
+    generation_context_parser.add_argument("--reference-id", action="append", default=[], help="Reference id, repeatable.")
+    generation_context_parser.set_defaults(handler=handle_show_generation_context)
 
     workflow_parser = subparsers.add_parser("run-workflow", help="Run benchmark-to-publish local workflow.")
     workflow_parser.add_argument("--creator-id", required=True, help="CreatorProfile id.")
@@ -598,6 +617,43 @@ def handle_show_user_context(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "target": {"collection": args.collection, "record_id": args.record_id},
         "sections": build_user_context_sections(item, target_type, provenance, decisions, provenance_diagnostics),
+    }
+
+
+def handle_show_generation_context(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    profile = JsonRepository(workspace, CreatorProfile).read(args.profile_id.strip())
+    constraints = GenerationTaskConstraints.from_cli_values(
+        intent=args.intent,
+        content_type=args.content_type,
+        topic_area=args.topic_area,
+        target_audiences=args.target_audience,
+        content_format=args.format,
+        tone=args.tone,
+        length=args.length,
+        do_items=args.do,
+        dont_items=args.dont,
+        reference_ids=args.reference_id,
+    )
+    context = build_generation_context(
+        profile=profile,
+        rules=JsonRepository(workspace, RuleCard).list_all(),
+        evidence=JsonRepository(workspace, RuleEvidence).list_all(),
+        provenance=JsonRepository(workspace, ProvenanceRecord).list_all(),
+        decisions=JsonRepository(workspace, DecisionRequest).list_all(),
+        task_constraints=constraints,
+    )
+    return {
+        "status_category": context.status_category,
+        "profile_id": context.profile["profile_id"],
+        "profile_version": context.profile["profile_version"],
+        "usable_rule_count": len(context.usable_rules),
+        "excluded_rule_count": len(context.excluded_rules),
+        "risk_warning_count": len(context.risk_warnings),
+        "missing_information_count": len(context.missing_information),
+        "machine_summary": context.machine_summary,
+        "user_summary": context.user_summary,
     }
 
 

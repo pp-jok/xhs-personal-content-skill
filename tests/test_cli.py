@@ -1440,6 +1440,134 @@ class CliTests(unittest.TestCase):
                 ["rule-approved", "rule-testing", "rule-validated"],
             )
 
+    def test_show_generation_context_returns_safe_read_only_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            JsonRepository(data_dir, CreatorProfile).create(
+                CreatorProfile(
+                    id="creator-secondary",
+                    name="第二账号",
+                    platform="小红书",
+                    positioning="另一个定位",
+                    target_audience=["另一类用户"],
+                    content_style=["具体"],
+                    forbidden_expressions=["虚假承诺"],
+                    goals=["建立信任"],
+                    content_formats=["图文"],
+                    publish_frequency="每周 1 篇",
+                    notes="不应被自动选中。",
+                )
+            )
+            approved = self._seed_rule(data_dir, "rule-approved-context", status="approved", summary="标题点名职场新人")
+            candidate = self._seed_rule(data_dir, "rule-candidate-context", status="candidate", summary="候选规则")
+            JsonRepository(data_dir, RuleEvidence).create(
+                RuleEvidence(
+                    id="evidence-approved-context",
+                    rule_id=approved.id,
+                    source_type="benchmark_analysis",
+                    source_id="analysis-001",
+                    source_fragment="标题",
+                    evidence_type="title",
+                    observable_fact="标题点名职场新人。",
+                    inference="用于支持规则。",
+                )
+            )
+            JsonRepository(data_dir, ProvenanceRecord).create(
+                ProvenanceRecord(
+                    id="provenance-approved-context",
+                    target_object_type="rule_card",
+                    target_object_id=approved.id,
+                    source_object_type="creator_profile",
+                    source_object_id="creator-main",
+                    source_version=1,
+                    actor="codex",
+                    artifact_nature="recommendation",
+                    method="test",
+                    note="账号档案来源。",
+                )
+            )
+            JsonRepository(data_dir, DecisionRequest).create(
+                DecisionRequest(
+                    id="decision-approved-context",
+                    target_object_type="rule_card",
+                    target_object_id=approved.id,
+                    question="是否采用？",
+                    options=["确认使用", "暂不使用"],
+                    option_outcomes={"确认使用": "confirmed", "暂不使用": "rejected"},
+                    recommendation="确认使用",
+                    recommendation_reason="测试。",
+                    impact="测试。",
+                    status="confirmed",
+                    selected_option="确认使用",
+                    resolved_at="2026-07-11T00:00:00Z",
+                    resolved_by="user",
+                )
+            )
+            before = self._snapshot_workspace(data_dir)
+
+            output = self._run_cli(
+                [
+                    "show-generation-context",
+                    "--workspace",
+                    temp_dir,
+                    "--profile-id",
+                    "creator-main",
+                    "--intent",
+                    " 准备后续选题 ",
+                    "--content-type",
+                    "图文",
+                    "--target-audience",
+                    "职场新人",
+                    "--target-audience",
+                    "职场新人",
+                    "--format",
+                    "清单",
+                    "--tone",
+                    "直接",
+                    "--do",
+                    "给步骤",
+                    "--dont",
+                    "夸大效果",
+                    "--reference-id",
+                    "ref-1",
+                    "--reference-id",
+                    "ref-1",
+                ]
+            )
+
+            result = output["result"]
+            self.assertTrue(output["ok"])
+            self.assertEqual(result["profile_id"], "creator-main")
+            self.assertEqual(result["usable_rule_count"], 1)
+            self.assertEqual(result["excluded_rule_count"], 1)
+            self.assertEqual(result["machine_summary"]["usable_rule_ids"], [approved.id])
+            self.assertEqual(result["machine_summary"]["excluded_rule_ids"], [candidate.id])
+            self.assertEqual(result["machine_summary"]["task_constraints"]["target_audiences"], ["职场新人"])
+            self.assertEqual(result["machine_summary"]["task_constraints"]["reference_ids"], ["ref-1"])
+            self.assertIn("主账号", result["user_summary"])
+            self.assertIn("候选规则：尚未经过用户确认", result["user_summary"])
+            self.assertNotIn("creator-main", result["user_summary"])
+            self.assertNotIn(approved.id, result["user_summary"])
+            self.assertNotIn("approved", result["user_summary"])
+            json.dumps(result["machine_summary"], ensure_ascii=False)
+            self.assertEqual(self._snapshot_workspace(data_dir), before)
+
+    def test_show_generation_context_missing_profile_fails_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            before = self._snapshot_workspace(data_dir)
+
+            output = self._run_cli(
+                ["show-generation-context", "--workspace", temp_dir, "--profile-id", "missing-profile"],
+                expected_code=1,
+            )
+
+            self.assertFalse(output["ok"])
+            self.assertIn("not found", output["error"])
+            self.assertEqual(self._snapshot_workspace(data_dir), before)
+
     def test_generate_draft_passes_only_active_rules_to_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir)
@@ -2539,6 +2667,12 @@ class CliTests(unittest.TestCase):
         )
         JsonRepository(data_dir, RuleCard).create(rule)
         return rule
+
+    def _snapshot_workspace(self, data_dir: Path) -> dict[str, str]:
+        return {
+            str(path.relative_to(data_dir)): path.read_text(encoding="utf-8")
+            for path in sorted(data_dir.rglob("*.json"))
+        }
 
     def _seed_draft_and_rules_for_quality(self, data_dir: Path) -> None:
         JsonRepository(data_dir, ContentDraft).create(
