@@ -12,6 +12,14 @@ from app.capture import build_browser_capture_record, build_capture_record
 from app.capture.browser.cdp_client import DEFAULT_CDP_URL, capture_xhs_link_with_browser
 from app.capture.capture_errors import CaptureInputError
 from app.capture.outcome import build_capture_error_outcome, build_capture_outcome
+from app.decisions import (
+    CandidateRuleDecisionError,
+    build_candidate_rule_decision_detail,
+    create_candidate_rule_decision,
+    list_pending_candidate_rule_decisions,
+    persist_candidate_rule_decision_resolution,
+    resolve_candidate_rule_decision,
+)
 from app.models.core import (
     MODEL_TYPES,
     Actor,
@@ -151,6 +159,27 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_decision_parser.add_argument("--selected-option", required=True, help="Selected decision option.")
     resolve_decision_parser.add_argument("--user-note", default="", help="Optional user note.")
     resolve_decision_parser.set_defaults(handler=handle_resolve_decision)
+
+    create_rule_decision_parser = subparsers.add_parser(
+        "create-rule-decision", help="Prepare a plain-language decision for one candidate rule."
+    )
+    create_rule_decision_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    create_rule_decision_parser.add_argument("--rule-id", required=True, help="Candidate rule id.")
+    create_rule_decision_parser.add_argument("--user-note", default="", help="Optional user note.")
+    create_rule_decision_parser.set_defaults(handler=handle_create_rule_decision)
+
+    pending_rule_decisions_parser = subparsers.add_parser(
+        "list-pending-rule-decisions", help="List executable candidate-rule decisions."
+    )
+    pending_rule_decisions_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    pending_rule_decisions_parser.set_defaults(handler=handle_list_pending_rule_decisions)
+
+    show_rule_decision_parser = subparsers.add_parser(
+        "show-rule-decision", help="Show one plain-language candidate-rule decision."
+    )
+    show_rule_decision_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    show_rule_decision_parser.add_argument("--decision-id", required=True, help="Decision id.")
+    show_rule_decision_parser.set_defaults(handler=handle_show_rule_decision)
 
     versions_parser = subparsers.add_parser("show-object-versions", help="Show stored version snapshots for one object.")
     versions_parser.add_argument("--workspace", required=True, help="Workspace directory.")
@@ -388,7 +417,7 @@ def handle_create_decision(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
     target_type = normalize_object_type(args.target_type)
-    assert_target_exists(workspace, target_type, args.target_id)
+    target = assert_target_exists(workspace, target_type, args.target_id)
     option_outcomes = parse_option_outcomes(args.option, args.option_outcome)
     existing = find_existing_decision(workspace, target_type, args.target_id, args.question)
     if existing and existing.status == "pending":
@@ -404,6 +433,7 @@ def handle_create_decision(args: argparse.Namespace) -> dict[str, Any]:
         recommendation=args.recommendation,
         recommendation_reason=args.recommendation_reason,
         impact=args.impact,
+        expected_target_version=target.version if target_type == "rule_card" and isinstance(target, RuleCard) and target.status == "candidate" else None,
         created_by="codex",
         source_type="codex_recommendation",
         created_from="create-decision",
@@ -426,6 +456,42 @@ def handle_resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
     ensure_workspace_dirs(workspace)
     repo = JsonRepository(workspace, DecisionRequest)
     decision = repo.read(args.decision_id)
+    if decision.target_object_type == "rule_card":
+        rule_repo = JsonRepository(workspace, RuleCard)
+        rule = rule_repo.read(decision.target_object_id)
+        result = resolve_candidate_rule_decision(
+            decision,
+            rule,
+            args.selected_option,
+            args.user_note,
+            repo.list_all(),
+        )
+        persisted = persist_candidate_rule_decision_resolution(
+            result,
+            lambda item: rule_repo.upsert(
+                item,
+                changed_by="user",
+                change_note="resolve candidate rule decision",
+            ),
+            lambda item: repo.upsert(
+                item,
+                changed_by="user",
+                change_note="user resolved candidate rule decision",
+            ),
+            lambda item: rule_repo.upsert(
+                item,
+                changed_by="system",
+                change_note="restore after decision save failure",
+            ),
+        )
+        return {
+            "decision_id": persisted.decision.id,
+            "rule_id": persisted.rule.id,
+            "status": persisted.decision.status,
+            "selected_option": persisted.decision.selected_option,
+            "resulting_state_changes": persisted.decision.resulting_state_changes,
+            "user_summary": result.user_summary,
+        }
     if decision.status != "pending":
         raise ValueError("Only pending decisions can be resolved. Create a new DecisionRequest to change a past decision.")
     selected = args.selected_option
@@ -452,6 +518,54 @@ def handle_resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
         "status": updated.status,
         "selected_option": updated.selected_option,
         "resulting_state_changes": updated.resulting_state_changes,
+    }
+
+
+def handle_create_rule_decision(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    rule = JsonRepository(workspace, RuleCard).read(args.rule_id)
+    decision_repo = JsonRepository(workspace, DecisionRequest)
+    result = create_candidate_rule_decision(rule, decision_repo.list_all(), args.user_note)
+    if not result.reused_existing:
+        decision_repo.create(result.decision)
+    return {
+        "decision_id": result.decision.id,
+        "reused_existing": result.reused_existing,
+        "user_summary": result.user_summary,
+    }
+
+
+def handle_list_pending_rule_decisions(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    result = list_pending_candidate_rule_decisions(
+        JsonRepository(workspace, DecisionRequest).list_all(),
+        JsonRepository(workspace, RuleCard).list_all(),
+        JsonRepository(workspace, RuleEvidence).list_all(),
+    )
+    suffix = f"另有 {result.stale_count} 条待决记录已经失效，需要技术处理，本次未展示。" if result.stale_count else ""
+    return {
+        "items": result.items,
+        "stale_count": result.stale_count,
+        "user_summary": f"当前有 {len(result.items)} 条可以处理的候选规则决定。{suffix}",
+    }
+
+
+def handle_show_rule_decision(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    decision = JsonRepository(workspace, DecisionRequest).read(args.decision_id)
+    if decision.target_object_type != "rule_card":
+        raise CandidateRuleDecisionError("该待决记录不属于候选规则决策，不能通过此入口查看。")
+    rule = JsonRepository(workspace, RuleCard).read(decision.target_object_id)
+    return {
+        "decision_id": decision.id,
+        "user_summary": build_candidate_rule_decision_detail(
+            decision,
+            rule,
+            JsonRepository(workspace, RuleEvidence).list_all(),
+        ),
     }
 
 
@@ -1591,6 +1705,7 @@ def create_feedback_candidate_decision(workspace: Path, rule: RuleCard, step: st
         recommendation="confirm",
         recommendation_reason="这条规则来自反馈推导，需要你确认后才长期生效。",
         impact="确认后进入长期规则；拒绝后不参与后续生成。",
+        expected_target_version=rule.version,
         created_by="codex",
         source_type="user_feedback",
         source_note=step,

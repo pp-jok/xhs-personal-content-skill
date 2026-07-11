@@ -404,10 +404,12 @@ Action:
 5. Use `add-feedback` for structured feedback capture.
 6. When the user explicitly asks to extract rules from a post that already has evidence-first analysis and account-fit, prepare at most 3 structured proposals and use `propose-candidate-rules`. It validates saved evidence and account-fit before saving pending candidates.
 7. `create-rule-from-analysis` remains a compatibility command. Do not use it as the evidence-grounded candidate-rule path.
-8. Use lifecycle commands for explicit user decisions: `approve-rule`, `mark-rule-testing`, `record-rule-result`, `reject-rule`, or `deprecate-rule`.
-9. For candidate rules that need an explicit choice, create a `DecisionRequest` with `create-decision`; use `resolve-decision` when the user confirms or rejects it.
-   - If options are Chinese or custom labels, pass explicit `--option-outcome` mappings such as `确认使用=confirmed` and `暂不使用=rejected`.
-   - Do not infer the decision result from display text.
+8. For an evidence-grounded candidate rule that needs an explicit choice, use `create-rule-decision`, then `list-pending-rule-decisions` or `show-rule-decision`, and finally `resolve-decision` with the complete option text.
+   - Present the rule, visible evidence, risks, recommendation, reason, and both consequences in ordinary language.
+   - “确认使用” changes the rule to an approved long-term rule; “暂不使用” changes it to rejected while keeping evidence and source records.
+   - Do not create a decision automatically for every candidate. Wait for the user or an explicit higher-level workflow to request the decision.
+   - Do not infer a decision result from display text.
+9. `approve-rule` and `reject-rule` remain compatibility commands. Do not recommend them as the normal candidate-rule path; if they change a rule first, an old pending decision becomes invalid and must not be resolved.
 10. Use `check-rule-relations` before claiming that rules conflict; repeated summaries with different applicable scenarios are not automatically conflicts.
 11. Prefer updating existing rules over creating duplicates.
 12. Reply with: what rule changed, what evidence supports it, current status, and how it will affect future output.
