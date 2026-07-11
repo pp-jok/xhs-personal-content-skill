@@ -32,6 +32,8 @@ AMBIGUOUS_DIRECTION_PATTERNS = ("不要避免", "不应禁止", "并非不建议
 EXPLICIT_NEGATIVE_PATTERNS = ("避免使用", "不要使用", "禁止使用", "不建议使用", "不应使用", "不能使用", "避免采用", "不要采用", "禁止采用", "不建议采用", "不应采用", "不能采用", "避免照搬", "不要照搬", "禁止照搬", "不建议照搬", "不应照搬", "不能照搬", "删除", "存在风险，应避免")
 VIDEO_REQUIREMENT_PATTERNS = ("使用视频", "采用视频", "视频形式", "视频内容", "制作视频", "以视频呈现", "需要视频")
 VIDEO_NEGATION_PATTERNS = ("不要使用视频", "避免视频", "非视频", "无需视频")
+INCOMPLETE_FRAGMENT_ENDINGS = ("如何", "怎么", "为什么", "为何", "怎样", "哪些", "什么", "是否", "能否", "可以吗", "怎么办", "需要", "应该", "通过", "使用", "采用", "包括", "例如", "比如", "以及", "并且", "但是", "因为", "所以", "准备")
+TRANSITION_MARKERS = ("但", "但是", "不过", "然而", "仍", "仍然", "可以", "可")
 
 
 class CandidateProposalError(ValueError):
@@ -198,6 +200,8 @@ def validate_classification_direction(proposal: dict[str, Any], assessments: dic
 
 def validate_profile_boundaries(proposal: dict[str, Any], profile: CreatorProfile) -> None:
     rule_text = str(proposal["rule_text"])
+    if has_ambiguous_video_requirement(proposal):
+        raise CandidateProposalError("该提案对视频形式的要求相互矛盾，请明确是否需要视频内容。")
     if requires_video(proposal) and "视频" not in profile.content_formats:
         raise CandidateProposalError("该提案明确要求视频形式，但当前账号档案未包含视频内容形式。")
     if is_negative_rule(rule_text, proposal["risk_notes"]):
@@ -410,7 +414,19 @@ def matches_saved_text_fragment(proposed: str, saved_values: list[Any], *, minim
             return False
     elif len(effective) < minimum_length:
         return False
-    return any(candidate == str(saved).strip() or candidate in str(saved).strip() for saved in saved_values if text(saved))
+    for saved in saved_values:
+        if not text(saved):
+            continue
+        saved_text = str(saved).strip()
+        if candidate == saved_text:
+            return True
+        if candidate in saved_text and not has_incomplete_fragment_ending(candidate):
+            return True
+    return False
+
+
+def has_incomplete_fragment_ending(value: str) -> bool:
+    return any(value.endswith(ending) for ending in INCOMPLETE_FRAGMENT_ENDINGS)
 
 
 def expected_dimensions_for_type(rule_type: str) -> set[str]:
@@ -450,22 +466,52 @@ def classify_rule_direction(rule_text: str, risk_notes: list[str]) -> str:
     normalized = re.sub(r"\s+", "", rule_text)
     if any(pattern in normalized for pattern in AMBIGUOUS_DIRECTION_PATTERNS):
         return "ambiguous"
-    has_positive_action = any(marker in normalized for marker in POSITIVE_MARKERS + ("应该", "应当", "推荐"))
-    if ("风险" in normalized and has_positive_action) or (any(marker in normalized for marker in ("但", "但是", "不过", "然而", "仍", "仍然", "可控")) and has_positive_action and has_negative_marker(normalized)):
+    if has_mixed_negative_then_positive_clause(normalized):
         return "ambiguous"
     if any(pattern in normalized for pattern in EXPLICIT_NEGATIVE_PATTERNS):
         return "negative"
+    has_positive_action = any(marker in normalized for marker in POSITIVE_MARKERS + ("应该", "应当", "推荐"))
+    if ("风险" in normalized and has_positive_action) or (any(marker in normalized for marker in TRANSITION_MARKERS + ("可控",)) and has_positive_action and has_negative_marker(normalized)):
+        return "ambiguous"
+    if has_negative_marker(normalized):
+        return "negative"
     return "positive"
+
+
+def has_mixed_negative_then_positive_clause(value: str) -> bool:
+    for marker in TRANSITION_MARKERS:
+        if marker not in value:
+            continue
+        before, after = value.split(marker, 1)
+        if any(pattern in before for pattern in EXPLICIT_NEGATIVE_PATTERNS) and any(action in after for action in POSITIVE_MARKERS + ("应该", "应当", "推荐")):
+            return True
+    return False
 
 
 def requires_video(proposal: dict[str, Any]) -> bool:
     for value in proposal["scope"] + proposal["applicable_when"]:
         normalized = re.sub(r"\s+", "", value)
-        if any(pattern in normalized for pattern in VIDEO_NEGATION_PATTERNS):
+        _, requires_video_content = video_requirement_parts(normalized)
+        if not requires_video_content:
             continue
-        if any(pattern in normalized for pattern in VIDEO_REQUIREMENT_PATTERNS):
-            return True
+        return True
     return False
+
+
+def has_ambiguous_video_requirement(proposal: dict[str, Any]) -> bool:
+    return any(
+        has_negation and requires_video_content
+        for value in proposal["scope"] + proposal["applicable_when"]
+        for has_negation, requires_video_content in [video_requirement_parts(re.sub(r"\s+", "", value))]
+    )
+
+
+def video_requirement_parts(value: str) -> tuple[bool, bool]:
+    has_negation = any(pattern in value for pattern in VIDEO_NEGATION_PATTERNS)
+    remainder = value
+    for pattern in VIDEO_NEGATION_PATTERNS:
+        remainder = remainder.replace(pattern, "")
+    return has_negation, any(pattern in remainder for pattern in VIDEO_REQUIREMENT_PATTERNS)
 
 
 def duplicate_key(rule_text: str, rule_type: str, scope: list[str]) -> tuple[str, str, tuple[str, ...]]:

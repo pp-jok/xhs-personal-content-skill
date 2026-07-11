@@ -285,7 +285,7 @@ class CandidateRuleProposalTests(unittest.TestCase):
 
     def test_evidence_requires_a_specific_contiguous_saved_fragment(self) -> None:
         capture, analysis, profile = make_ready_records()
-        for observable_fact in ("人", "新人", "汇报", "123456", "！！！", capture.title + "，因此适用于所有职场账号"):
+        for observable_fact in ("人", "新人", "汇报", "123456", "！！！", "职场新人如何", "如何准备", capture.title + "，因此适用于所有职场账号"):
             payload = valid_payload()
             payload["proposals"][0]["evidence"][0]["observable_fact"] = observable_fact
             result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
@@ -299,6 +299,17 @@ class CandidateRuleProposalTests(unittest.TestCase):
         payload = valid_payload()
         payload["proposals"][0]["evidence"][0]["observable_fact"] = "职场新人如何准备工作汇报"
         self.assertEqual(propose_candidate_rules(capture, analysis, profile, payload, [], []) ["proposal_results"][0]["outcome"], "rejected")
+
+    def test_complete_saved_question_evidence_is_not_rejected_as_a_fragment(self) -> None:
+        for title in ("新人如何选题", "如何准备工作汇报", "为什么标题需要明确人群"):
+            capture, analysis, profile = make_ready_records()
+            capture.title = title
+            analysis.title_analysis = {"observable": title, "inference": "标题是完整的可见事实。"}
+            analysis.account_fit["assessments"][0] = make_assessment("标题", "directly_borrowable", title)
+            payload = valid_payload()
+            payload["proposals"][0]["evidence"][0]["observable_fact"] = title
+            result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
+            self.assertEqual(result["proposal_results"][0]["outcome"], "created", title)
 
     def test_account_fit_basis_requires_specific_used_assessment_text(self) -> None:
         capture, analysis, profile = make_ready_records()
@@ -316,7 +327,14 @@ class CandidateRuleProposalTests(unittest.TestCase):
         self.assertEqual(result["proposal_results"][0]["outcome"], "rejected")
 
     def test_risky_rules_reject_ambiguous_direction_reversals(self) -> None:
-        for rule_text in ("不要避免使用绝对承诺", "风险可控，应使用绝对承诺", "虽然有风险，但仍应使用绝对承诺"):
+        for rule_text in (
+            "不要避免使用绝对承诺",
+            "风险可控，应使用绝对承诺",
+            "虽然有风险，但仍应使用绝对承诺",
+            "存在风险，应避免使用绝对承诺，但可以使用保证有效",
+            "不要使用绝对承诺，但应采用强刺激标题",
+            "禁止使用一定成功，不过可以使用保证有效",
+        ):
             capture, analysis, profile = make_ready_records(classification="risky")
             payload = valid_payload()
             payload["proposals"][0]["rule_text"] = rule_text
@@ -324,7 +342,14 @@ class CandidateRuleProposalTests(unittest.TestCase):
             result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
             self.assertEqual(result["proposal_results"][0]["outcome"], "rejected", rule_text)
 
-        for rule_text in ("避免使用绝对承诺", "不要使用绝对承诺", "禁止使用绝对承诺"):
+        for rule_text in (
+            "避免使用绝对承诺",
+            "不要使用绝对承诺",
+            "禁止使用绝对承诺",
+            "存在风险，应避免使用绝对承诺",
+            "有风险，建议避免采用强刺激标题",
+            "存在风险，不应使用保证性表达",
+        ):
             capture, analysis, profile = make_ready_records(classification="risky")
             payload = valid_payload()
             payload["proposals"][0]["rule_text"] = rule_text
@@ -387,6 +412,16 @@ class CandidateRuleProposalTests(unittest.TestCase):
         payload = valid_payload()
         payload["proposals"][0]["scope"] = ["采用视频形式"]
         self.assertEqual(propose_candidate_rules(capture, analysis, profile, payload, [], []) ["proposal_results"][0]["outcome"], "rejected")
+
+        payload = valid_payload()
+        payload["proposals"][0]["scope"] = ["视频案例分析"]
+        self.assertEqual(propose_candidate_rules(capture, analysis, profile, payload, [], []) ["proposal_results"][0]["outcome"], "created")
+
+        payload = valid_payload()
+        payload["proposals"][0]["scope"] = ["不要使用视频，但需要视频字幕"]
+        result = propose_candidate_rules(capture, analysis, profile, payload, [], [])
+        self.assertEqual(result["proposal_results"][0]["outcome"], "rejected")
+        self.assertEqual(result["created_rules"], [])
 
 
 def make_ready_records(classification: str = "directly_borrowable") -> tuple[CaptureRecord, BenchmarkAnalysis, CreatorProfile]:
