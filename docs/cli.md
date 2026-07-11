@@ -276,6 +276,46 @@ python3 -m app.cli.main add-feedback \
 
 当前 CLI 暂未提供试用 candidate 的显式参数。需要试用候选规则时，应先让用户通过决策确认，或在后续实验模式中单独实现。
 
+## 查看中央生成上下文
+
+推荐路径：
+
+```text
+已确认规则
+→ show-generation-context
+→ 后续选题或草稿流程
+```
+
+```bash
+python3 -m app.cli.main show-generation-context \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --profile-id creator-main \
+  --intent "准备后续选题" \
+  --content-type "图文" \
+  --target-audience "职场新人" \
+  --format "清单" \
+  --tone "直接、具体" \
+  --do "给出可执行步骤" \
+  --dont "夸大效果" \
+  --reference-id benchmark-post-001
+```
+
+该命令只读，不创建 `TopicItem`，不创建 `ContentDraft`，不调用模型，也不会修改规则、证据、来源或决策记录。当前 GenerationContext 是非持久化结构，用于让 Codex 和后续流程统一读取同一份生成输入。
+
+必须显式指定 `--profile-id`。命令不会自动选择第一条账号档案、最新账号档案或默认账号档案。
+
+上下文只使用：
+
+- `approved`
+- `testing`
+- `validated`
+
+`candidate` 不会进入上下文；即使候选规则有关联待决记录，也必须先通过候选规则决定流程确认。当前命令不使用 `allow_candidate_ids`。
+
+如果可用规则缺少独立 `RuleEvidence`，命令会提示“缺少独立证据记录”，但不会用 `RuleCard.examples` 伪造证据。如果规则无法通过 `ProvenanceRecord` 验证账号档案来源，或来源版本与当前账号档案不一致，命令也会提示风险。
+
+返回结果包含普通语言 `user_summary` 和后续流程可读取的 `machine_summary`。PR-4C / PR-4D 尚未实现；现有 `generate-topics`、`generate-draft` 等命令尚未接入中央上下文。
+
 ## 校验工作区
 
 ```bash

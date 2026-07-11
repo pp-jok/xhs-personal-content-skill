@@ -164,9 +164,12 @@ Prefer updating existing rules over creating duplicates. Always preserve the use
 
 When generating topics, drafts, or tasks, ground the output in accumulated account context:
 
+- Before later topic or draft work, prefer `show-generation-context` with an explicit profile id to inspect the current non-persistent central context.
+- Treat that context as read-only: it does not create topics, drafts, rules, or decisions, and it does not call a model.
 - Mention which account preference or rule influenced the result.
 - Use only active rules by default: `approved`, `testing`, and `validated`.
 - Do not use `candidate`, `rejected`, or `deprecated` rules in formal generation. Candidate rules stay under `【需要你决定】` until confirmed.
+- If a usable rule lacks independent evidence or profile provenance cannot be verified, say that clearly and use it conservatively; never invent evidence from examples or rule text.
 - Avoid generic content advice.
 - If context is insufficient, say what kind of sample would improve the next round.
 - Do not describe the output as coming from mock or internal services in normal conversation.
