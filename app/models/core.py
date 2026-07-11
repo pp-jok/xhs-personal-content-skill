@@ -523,6 +523,7 @@ class DecisionRequest(BaseModel):
     selected_option: str = ""
     user_note: str = ""
     resulting_state_changes: list[dict[str, Any]] = field(default_factory=list)
+    expected_target_version: int | None = None
     resolved_at: str | None = None
     resolved_by: Actor | None = None
 
@@ -558,6 +559,10 @@ class DecisionRequest(BaseModel):
         require_list(self.resulting_state_changes, "resulting_state_changes")
         for change in self.resulting_state_changes:
             require_dict(change, "resulting_state_changes item")
+        if self.expected_target_version is not None:
+            ensure_non_negative_int(self.expected_target_version, "expected_target_version")
+            if self.expected_target_version < 1:
+                raise ValidationError("expected_target_version must be at least 1")
         ensure_optional_text(self.resolved_at, "resolved_at")
         if self.resolved_by is not None:
             require_literal(self.resolved_by, Actor, "resolved_by")

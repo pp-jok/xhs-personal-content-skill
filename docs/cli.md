@@ -73,6 +73,33 @@ python3 -m app.cli.main show-provenance \
 
 ## 创建和处理用户决策
 
+### 候选规则的推荐主路径
+
+对 evidence-grounded candidate RuleCard，使用以下命令准备、查看和完成一次明确决定：
+
+```bash
+python3 -m app.cli.main create-rule-decision \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --rule-id rule-proposal-xxxx
+
+python3 -m app.cli.main list-pending-rule-decisions \
+  --workspace .xhs-personal-content-skill/real-sample
+
+python3 -m app.cli.main show-rule-decision \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --decision-id decision-rule-xxxx
+
+python3 -m app.cli.main resolve-decision \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --decision-id decision-rule-xxxx \
+  --selected-option "确认使用" \
+  --user-note "适合当前账号"
+```
+
+该主路径固定提供“确认使用”和“暂不使用”两个选项。确认使用会将规则更新为 `approved`；暂不使用会更新为 `rejected`，但保留已有证据和来源记录。候选规则不会自动创建决定，也不会自动进入正式生成。
+
+列表和详情会隐藏内部标识，并跳过已失效的待决记录。若规则已被其他兼容命令改变状态或版本，旧决定不能继续执行。写入前会校验状态和版本；JSON 文件没有数据库事务，第二次写入失败时系统会尝试恢复规则状态并明确报告未完成。
+
 创建待决策事项：
 
 ```bash
@@ -108,7 +135,7 @@ python3 -m app.cli.main resolve-decision \
   --user-note "这条适合我的账号"
 ```
 
-第一版只对 `rule_card` 做确定性状态更新：`confirm` 会把候选规则更新为 `approved`，`reject` 会更新为 `rejected`。
+第一版只对 `rule_card` 做确定性状态更新：`confirm` 会把候选规则更新为 `approved`，`reject` 会更新为 `rejected`。这是兼容入口；新的候选规则用户主路径应使用上面的 `create-rule-decision`、列表/详情和 `resolve-decision`。
 
 `--option` 是用户看到的显示文本，`--option-outcome` 是系统状态结果。中文或自定义选项必须显式映射：
 
@@ -469,6 +496,8 @@ python3 -m app.cli.main create-rule-from-analysis \
 - 一条规则证据，记录可见事实和推断。
 
 ## 规则生命周期
+
+`approve-rule` 与 `reject-rule` 保留用于兼容和底层维护，但不是普通用户处理候选规则的推荐入口。通过它们直接改变规则后，已有待决记录会被视为失效，不能再继续 resolve。
 
 确认规则：
 

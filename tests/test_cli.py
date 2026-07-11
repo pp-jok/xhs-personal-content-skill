@@ -31,6 +31,7 @@ from app.models.core import (  # noqa: E402
     TopicItem,
 )
 from app.repositories import JsonRepository  # noqa: E402
+from app.rules.selection import select_active_rule_cards  # noqa: E402
 
 
 class RecordingPromptService:
@@ -517,6 +518,195 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(rejected_rule.status, "rejected")
 
+    def test_candidate_rule_decision_commands_use_safe_user_summaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            rule = RuleCard(
+                id="rule-safe-decision",
+                name="候选标题规则",
+                type="title",
+                source_ids=["analysis-001"],
+                applicable_scenarios=["标题"],
+                rule_summary="标题先说明具体对象。",
+                examples=["职场新人如何准备工作汇报"],
+                risks=["单篇内容形成"],
+                adaptation_notes="需要更多样本验证。",
+                status="candidate",
+                strength="weak",
+                created_by="codex",
+            )
+            JsonRepository(workspace, RuleCard).create(rule)
+            JsonRepository(workspace, RuleEvidence).create(
+                RuleEvidence(
+                    id="evidence-safe-decision",
+                    rule_id=rule.id,
+                    source_type="benchmark_analysis",
+                    source_id="analysis-001",
+                    source_fragment="标题",
+                    evidence_type="title",
+                    observable_fact="职场新人如何准备工作汇报",
+                    inference="可见标题支持候选规则。",
+                )
+            )
+
+            created = self._run_cli(["create-rule-decision", "--workspace", temp_dir, "--rule-id", rule.id])
+            listed = self._run_cli(["list-pending-rule-decisions", "--workspace", temp_dir])
+            detail = self._run_cli(
+                ["show-rule-decision", "--workspace", temp_dir, "--decision-id", created["result"]["decision_id"]]
+            )
+            resolved = self._run_cli(
+                [
+                    "resolve-decision",
+                    "--workspace",
+                    temp_dir,
+                    "--decision-id",
+                    created["result"]["decision_id"],
+                    "--selected-option",
+                    "确认使用",
+                    "--user-note",
+                    "适合当前账号。",
+                ]
+            )
+
+            saved_rule = JsonRepository(workspace, RuleCard).read(rule.id)
+            saved_decision = JsonRepository(workspace, DecisionRequest).read(created["result"]["decision_id"])
+            self.assertTrue(created["ok"])
+            self.assertIn("单篇或有限证据", created["result"]["user_summary"])
+            self.assertNotIn(rule.id, created["result"]["user_summary"])
+            self.assertEqual(len(listed["result"]["items"]), 1)
+            self.assertIn("帖子证据", listed["result"]["items"][0])
+            self.assertNotIn(rule.id, listed["result"]["items"][0])
+            self.assertIn("确认使用", detail["result"]["user_summary"])
+            self.assertNotIn(rule.id, detail["result"]["user_summary"])
+            self.assertEqual(saved_rule.status, "approved")
+            self.assertEqual(saved_decision.selected_option, "确认使用")
+            self.assertEqual(saved_decision.resolved_by, "user")
+            self.assertIn("已批准状态", resolved["result"]["user_summary"])
+
+            rejected_rule = RuleCard(
+                id="rule-safe-reject",
+                name="另一条候选规则",
+                type="cover",
+                source_ids=["analysis-002"],
+                applicable_scenarios=["封面"],
+                rule_summary="封面避免绝对承诺。",
+                examples=["三天一定见效"],
+                risks=["表达过强"],
+                adaptation_notes="保留风险提醒。",
+                status="candidate",
+            )
+            JsonRepository(workspace, RuleCard).create(rejected_rule)
+            rejected_created = self._run_cli(
+                ["create-rule-decision", "--workspace", temp_dir, "--rule-id", rejected_rule.id]
+            )
+            rejected_result = self._run_cli(
+                [
+                    "resolve-decision",
+                    "--workspace",
+                    temp_dir,
+                    "--decision-id",
+                    rejected_created["result"]["decision_id"],
+                    "--selected-option",
+                    "暂不使用",
+                ]
+            )
+            self.assertEqual(JsonRepository(workspace, RuleCard).read(rejected_rule.id).status, "rejected")
+            self.assertEqual(select_active_rule_cards([JsonRepository(workspace, RuleCard).read(rejected_rule.id)]), [])
+            self.assertIn("已拒绝状态", rejected_result["result"]["user_summary"])
+
+    def test_candidate_rule_decision_rejects_stale_target_after_direct_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            rule = RuleCard(
+                id="rule-stale-decision",
+                name="候选规则",
+                type="title",
+                source_ids=["analysis-001"],
+                applicable_scenarios=["标题"],
+                rule_summary="标题先说明对象。",
+                examples=["职场新人如何汇报"],
+                risks=["单篇内容形成"],
+                adaptation_notes="需要更多样本。",
+                status="candidate",
+            )
+            JsonRepository(workspace, RuleCard).create(rule)
+            created = self._run_cli(["create-rule-decision", "--workspace", temp_dir, "--rule-id", rule.id])
+            self._run_cli(["approve-rule", "--workspace", temp_dir, "--rule-id", rule.id])
+            listed = self._run_cli(["list-pending-rule-decisions", "--workspace", temp_dir])
+            resolved = self._run_cli(
+                [
+                    "resolve-decision",
+                    "--workspace",
+                    temp_dir,
+                    "--decision-id",
+                    created["result"]["decision_id"],
+                    "--selected-option",
+                    "确认使用",
+                ],
+                expected_code=1,
+            )
+
+            self.assertEqual(listed["result"]["items"], [])
+            self.assertEqual(listed["result"]["stale_count"], 1)
+            self.assertIn("状态已发生变化", resolved["error"])
+            self.assertEqual(JsonRepository(workspace, DecisionRequest).read(created["result"]["decision_id"]).status, "pending")
+
+    def test_candidate_rule_decision_rejects_multiple_pending_records_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            rule = RuleCard(
+                id="rule-conflicting-decisions",
+                name="候选规则",
+                type="title",
+                source_ids=["analysis-001"],
+                applicable_scenarios=["标题"],
+                rule_summary="标题先说明对象。",
+                examples=["职场新人如何汇报"],
+                risks=["单篇内容形成"],
+                adaptation_notes="需要更多样本。",
+                status="candidate",
+            )
+            JsonRepository(workspace, RuleCard).create(rule)
+            decisions = JsonRepository(workspace, DecisionRequest)
+            for decision_id, question in (("decision-conflict-first", "第一个决定"), ("decision-conflict-second", "第二个决定")):
+                decisions.create(
+                    DecisionRequest(
+                        id=decision_id,
+                        target_object_type="rule_card",
+                        target_object_id=rule.id,
+                        question=question,
+                        options=["确认使用", "暂不使用"],
+                        option_outcomes={"确认使用": "confirmed", "暂不使用": "rejected"},
+                        recommendation="暂不使用",
+                        recommendation_reason="有限证据。",
+                        impact="确认或拒绝。",
+                        expected_target_version=rule.version,
+                        created_by="codex",
+                    )
+                )
+
+            for decision_id in ("decision-conflict-first", "decision-conflict-second"):
+                resolved = self._run_cli(
+                    [
+                        "resolve-decision",
+                        "--workspace",
+                        temp_dir,
+                        "--decision-id",
+                        decision_id,
+                        "--selected-option",
+                        "确认使用",
+                    ],
+                    expected_code=1,
+                )
+                self.assertIn("多个待处理决定", resolved["error"])
+
+            self.assertEqual(JsonRepository(workspace, RuleCard).read(rule.id).status, "candidate")
+            for decision in decisions.list_all():
+                self.assertEqual(decision.status, "pending")
+                self.assertEqual(decision.selected_option, "")
+                self.assertIsNone(decision.resolved_by)
+                self.assertIsNone(decision.resolved_at)
+
     def test_decision_cli_uses_explicit_outcome_mapping_for_chinese_labels(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
@@ -623,7 +813,7 @@ class CliTests(unittest.TestCase):
             )
 
             self.assertFalse(repeated["ok"])
-            self.assertIn("Only pending decisions can be resolved", repeated["error"])
+            self.assertIn("已完成", repeated["error"])
             self.assertEqual(JsonRepository(workspace, RuleCard).read("rule-once").status, "approved")
 
     def test_decision_cli_does_not_overwrite_resolved_decisions(self) -> None:
@@ -1029,6 +1219,8 @@ class CliTests(unittest.TestCase):
             self.assertEqual(rules["feedback-rule-title-5"].status, "candidate")
             self.assertEqual(len(decisions), 4)
             self.assertEqual(decisions[0].target_object_id, "feedback-rule-title-1")
+            pending_decisions = [item for item in decisions if item.status == "pending"]
+            self.assertTrue(all(item.expected_target_version == 1 for item in pending_decisions))
             resolved = [item for item in decisions if item.target_object_id == "feedback-rule-title-2"][0]
             self.assertEqual(resolved.status, "confirmed")
             self.assertEqual(resolved.resolved_by, "user")
