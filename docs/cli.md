@@ -431,7 +431,30 @@ python3 -m app.cli.main promote-to-benchmark \
 
 该命令用于运营人员确认后，把已采集和拆解的素材提升为对标账号草稿和对标帖子草稿。它不会自动判断任意链接都是强对标；生成结果仍需要人工确认和修订。
 
-## 从分析结果创建候选规则
+## 基于证据提出候选规则
+
+当一篇内容已经完成 evidence-first 分析和同一账号档案的适配评估后，上层调用方可以提供最多 3 条结构化提案：
+
+```bash
+python3 -m app.cli.main propose-candidate-rules \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --analysis-id analysis-from-capture-xxxx \
+  --creator-id creator-main \
+  --proposals-file candidate_proposals.json
+```
+
+`candidate_proposals.json` 由 Codex 或其他上层调用方生成。本地服务不生成规则文本，只验证：
+
+- 每条提案是否使用已保存的帖子证据和账号适配判断；
+- 是否与账号档案版本一致；
+- 是否与现有规则构成精确重复；
+- 是否违反明确的禁用表达或内容形式边界。
+
+通过验证的规则会以待确认状态保存，并保留帖子证据和分析、账号档案两条来源记录。它们不会自动生效、不参与正式生成，也不会更新旧的 `candidate_rule_ids` 占位字段。
+
+第一版不使用互动数据作为规则依据，不支持语义去重或完整冲突检测；近似或语义冲突仍需人工确认。旧 `generate-rule-cards` 仍是 mock/流程验证入口，不是此路径的一部分。
+
+## 兼容：从分析结果创建候选规则
 
 ```bash
 python3 -m app.cli.main create-rule-from-analysis \

@@ -1988,6 +1988,124 @@ class CliTests(unittest.TestCase):
             self.assertIn([first.id, third.id], conflict_pairs)
             self.assertNotIn([first.id, second.id], conflict_pairs)
 
+    def test_propose_candidate_rules_creates_only_candidate_artifacts_with_safe_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            profile = CreatorProfile(
+                id="creator-proposal",
+                name="主账号",
+                positioning="帮助职场新人提升表达能力",
+                target_audience=["职场新人"],
+                content_style=["具体"],
+                forbidden_expressions=[],
+                goals=["建立信任"],
+                content_formats=["图文"],
+                publish_frequency="每周 3 次",
+                notes="测试账号。",
+            )
+            capture = CaptureRecord(
+                id="capture-proposal-cli",
+                inbox_item_id="inbox-proposal-cli",
+                source_url="https://example.test/proposal",
+                capture_status="success",
+                title="职场新人如何准备第一次工作汇报",
+                body="先说明汇报对象，再给出三个当天可完成的准备步骤。",
+                content_type="image",
+                metrics={},
+            )
+            analysis = BenchmarkAnalysis(
+                id="analysis-proposal-cli",
+                capture_id=capture.id,
+                title_analysis={"observable": capture.title, "inference": "标题明确说明适用对象和问题。"},
+            )
+            analysis.account_fit = {
+                "status_category": "complete",
+                "source_profile_id": profile.id,
+                "source_profile_version": profile.version,
+                "assessments": [
+                    {
+                        "element": "标题",
+                        "classification": "directly_borrowable",
+                        "post_evidence": [capture.title],
+                        "profile_evidence": ["目标受众明确包含：职场新人"],
+                        "reason": "目标受众明确出现：职场新人",
+                        "adaptation_guidance": "保留已验证的方法，用自己的内容重新表达。",
+                    }
+                ],
+            }
+            JsonRepository(data_dir, CreatorProfile).create(profile)
+            JsonRepository(data_dir, CaptureRecord).create(capture)
+            JsonRepository(data_dir, BenchmarkAnalysis).create(analysis)
+            proposal_file = data_dir / "proposals.json"
+            proposal_file.write_text(
+                json.dumps(
+                    {
+                        "proposals": [
+                            {
+                                "rule_text": "标题先明确具体目标人群，再说明需要解决的问题。",
+                                "rule_type": "title",
+                                "scope": ["职场新人内容", "标题"],
+                                "applicable_when": ["内容面向明确的职场新人群体"],
+                                "not_applicable_when": ["内容没有明确目标人群"],
+                                "evidence": [{"dimension": "标题", "observable_fact": capture.title}],
+                                "account_fit_basis": ["目标受众明确出现：职场新人"],
+                                "limitations": ["单篇帖子证据，仍需更多样本验证"],
+                                "risk_notes": [],
+                                "confidence": "low",
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            output = self._run_cli(
+                [
+                    "propose-candidate-rules",
+                    "--workspace",
+                    temp_dir,
+                    "--analysis-id",
+                    analysis.id,
+                    "--creator-id",
+                    profile.id,
+                    "--proposals-file",
+                    str(proposal_file),
+                ]
+            )
+
+            self.assertTrue(output["ok"])
+            self.assertEqual(output["result"]["created_count"], 1)
+            self.assertEqual(len(JsonRepository(data_dir, RuleCard).list_all()), 1)
+            self.assertEqual(len(JsonRepository(data_dir, RuleEvidence).list_all()), 1)
+            self.assertEqual(len(JsonRepository(data_dir, ProvenanceRecord).list_all()), 2)
+            self.assertEqual(len(JsonRepository(data_dir, DecisionRequest).list_all()), 0)
+            self.assertEqual(JsonRepository(data_dir, BenchmarkAnalysis).read(analysis.id).candidate_rule_ids, [])
+            self.assertIn("待确认", output["result"]["candidate_rule_summary"])
+            self.assertNotIn("rule-", output["result"]["candidate_rule_summary"])
+
+    def test_propose_candidate_rules_hides_missing_proposal_file_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing_file = Path(temp_dir) / "missing-proposals.json"
+
+            output = self._run_cli(
+                [
+                    "propose-candidate-rules",
+                    "--workspace",
+                    temp_dir,
+                    "--analysis-id",
+                    "analysis-missing",
+                    "--creator-id",
+                    "creator-missing",
+                    "--proposals-file",
+                    str(missing_file),
+                ],
+                expected_code=1,
+            )
+
+            self.assertIn("无法读取结构化规则提案", output["error"])
+            self.assertNotIn(str(missing_file), output["error"])
+
     def test_add_quality_review_creates_review_and_updates_draft_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir)

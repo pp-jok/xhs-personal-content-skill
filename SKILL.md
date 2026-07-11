@@ -402,14 +402,15 @@ Action:
 3. Extract polarity: keep, avoid, revise, strengthen, or test later.
 4. Convert the feedback into a durable preference, risk, or rule-card note.
 5. Use `add-feedback` for structured feedback capture.
-6. When a candidate rule comes from captured-post analysis, use `create-rule-from-analysis` to create both the rule card and evidence.
-7. Use lifecycle commands for explicit user decisions: `approve-rule`, `mark-rule-testing`, `record-rule-result`, `reject-rule`, or `deprecate-rule`.
-8. For candidate rules that need an explicit choice, create a `DecisionRequest` with `create-decision`; use `resolve-decision` when the user confirms or rejects it.
+6. When the user explicitly asks to extract rules from a post that already has evidence-first analysis and account-fit, prepare at most 3 structured proposals and use `propose-candidate-rules`. It validates saved evidence and account-fit before saving pending candidates.
+7. `create-rule-from-analysis` remains a compatibility command. Do not use it as the evidence-grounded candidate-rule path.
+8. Use lifecycle commands for explicit user decisions: `approve-rule`, `mark-rule-testing`, `record-rule-result`, `reject-rule`, or `deprecate-rule`.
+9. For candidate rules that need an explicit choice, create a `DecisionRequest` with `create-decision`; use `resolve-decision` when the user confirms or rejects it.
    - If options are Chinese or custom labels, pass explicit `--option-outcome` mappings such as `确认使用=confirmed` and `暂不使用=rejected`.
    - Do not infer the decision result from display text.
-9. Use `check-rule-relations` before claiming that rules conflict; repeated summaries with different applicable scenarios are not automatically conflicts.
-10. Prefer updating existing rules over creating duplicates.
-11. Reply with: what rule changed, what evidence supports it, current status, and how it will affect future output.
+10. Use `check-rule-relations` before claiming that rules conflict; repeated summaries with different applicable scenarios are not automatically conflicts.
+11. Prefer updating existing rules over creating duplicates.
+12. Reply with: what rule changed, what evidence supports it, current status, and how it will affect future output.
 
 Rule lifecycle:
 
@@ -565,6 +566,8 @@ python3 -m app.cli capture-xhs-link --workspace .xhs-personal-content-skill/real
 python3 -m app.cli capture-xhs-link --workspace .xhs-personal-content-skill/real-sample --inbox-item-id inbox-xxxx --manual-file /path/to/manual-capture.json
 python3 -m app.cli show-capture-result --workspace .xhs-personal-content-skill/real-sample --capture-id capture-from-inbox-xxxx
 python3 -m app.cli analyze-captured-post --workspace .xhs-personal-content-skill/real-sample --capture-id capture-from-inbox-xxxx
+python3 -m app.cli assess-account-fit --workspace .xhs-personal-content-skill/real-sample --analysis-id analysis-from-capture-xxxx --creator-id creator-main
+python3 -m app.cli propose-candidate-rules --workspace .xhs-personal-content-skill/real-sample --analysis-id analysis-from-capture-xxxx --creator-id creator-main --proposals-file candidate_proposals.json
 python3 -m app.cli promote-to-benchmark --workspace .xhs-personal-content-skill/real-sample --inbox-item-id inbox-xxxx
 python3 -m app.cli create-rule-from-analysis --workspace .xhs-personal-content-skill/real-sample --analysis-id analysis-from-capture-xxxx --candidate-id candidate-rule-from-capture-xxxx-1
 python3 -m app.cli approve-rule --workspace .xhs-personal-content-skill/real-sample --rule-id rule-from-candidate-rule-from-capture-xxxx-1
