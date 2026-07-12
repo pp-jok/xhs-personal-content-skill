@@ -20,7 +20,7 @@ from app.decisions import (
     persist_candidate_rule_decision_resolution,
     resolve_candidate_rule_decision,
 )
-from app.generation import GenerationTaskConstraints, build_generation_context
+from app.generation import GenerationTaskConstraints, generate_topics_from_context, build_generation_context
 from app.models.core import (
     MODEL_TYPES,
     Actor,
@@ -363,11 +363,22 @@ def build_parser() -> argparse.ArgumentParser:
     rule_parser.add_argument("--benchmark-post-id", required=True, help="BenchmarkPost id.")
     rule_parser.set_defaults(handler=handle_generate_rule_cards)
 
-    topics_parser = subparsers.add_parser("generate-topics", help="Generate local mock topics from rules and one benchmark post.")
+    topics_parser = subparsers.add_parser("generate-topics", help="Generate persona-aware TopicItem records from GenerationContext.")
     topics_parser.add_argument("--workspace", required=True, help="Workspace directory.")
-    topics_parser.add_argument("--creator-id", required=True, help="CreatorProfile id.")
-    topics_parser.add_argument("--benchmark-post-id", required=True, help="BenchmarkPost id.")
+    topics_parser.add_argument("--profile-id", help="CreatorProfile id.")
+    topics_parser.add_argument("--creator-id", help="Compatibility alias for --profile-id.")
+    topics_parser.add_argument("--benchmark-post-id", help="Compatibility reference id; no longer drives rule generation.")
     topics_parser.add_argument("--topic-count", type=int, default=5, help="Number of topics to generate.")
+    topics_parser.add_argument("--intent", default="", help="Current generation intent.")
+    topics_parser.add_argument("--content-type", default="", help="Requested content type.")
+    topics_parser.add_argument("--topic-area", default="", help="Requested topic area.")
+    topics_parser.add_argument("--target-audience", action="append", default=[], help="Target audience, repeatable.")
+    topics_parser.add_argument("--format", default="", help="Requested content format.")
+    topics_parser.add_argument("--tone", default="", help="Requested tone.")
+    topics_parser.add_argument("--length", default="", help="Requested length.")
+    topics_parser.add_argument("--do", action="append", default=[], help="Required action, repeatable.")
+    topics_parser.add_argument("--dont", action="append", default=[], help="Avoidance constraint, repeatable.")
+    topics_parser.add_argument("--reference-id", action="append", default=[], help="Reference id, repeatable.")
     topics_parser.set_defaults(handler=handle_generate_topics)
 
     draft_parser = subparsers.add_parser("generate-draft", help="Generate a local mock draft for one topic.")
@@ -1151,31 +1162,55 @@ def handle_generate_rule_cards(args: argparse.Namespace) -> dict[str, Any]:
 def handle_generate_topics(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
-    creator = JsonRepository(workspace, CreatorProfile).read(args.creator_id)
-    post = JsonRepository(workspace, BenchmarkPost).read(args.benchmark_post_id)
-    tags = JsonRepository(workspace, CustomTag).list_all()
-    rule_repo = JsonRepository(workspace, RuleCard)
-    rule_cards = [rule for rule in rule_repo.list_all() if post.id in rule.source_ids]
-    if not rule_cards:
-        generated = handle_generate_rule_cards(args)
-        rule_cards = [rule_repo.read(rule_id) for rule_id in generated["rule_card_ids"]]
-    active_rule_cards = select_active_rule_cards(rule_cards)
-
-    topic_payload = build_prompt_service(args.prompts_dir).run(
-        "generate_topic_pool",
-        {
-            "creator_profile": creator.to_dict(),
-            "custom_tags": [tag.to_dict() for tag in tags],
-            "rule_cards": [rule.to_dict() for rule in active_rule_cards],
-            "reference_posts": [post.to_dict()],
-            "topic_count": args.topic_count,
-        },
+    profile_id = resolve_generation_profile_id(args.profile_id, args.creator_id)
+    profile = JsonRepository(workspace, CreatorProfile).read(profile_id)
+    reference_ids = list(args.reference_id)
+    if args.benchmark_post_id:
+        reference_ids.append(args.benchmark_post_id)
+    constraints = GenerationTaskConstraints.from_cli_values(
+        intent=args.intent,
+        content_type=args.content_type,
+        topic_area=args.topic_area,
+        target_audiences=args.target_audience,
+        content_format=args.format,
+        tone=args.tone,
+        length=args.length,
+        do_items=args.do,
+        dont_items=args.dont,
+        reference_ids=reference_ids,
     )
-    saved = save_topics(workspace, post.id, topic_payload["topics"])
-    warnings = list(topic_payload.get("warnings", []))
-    if rule_cards and not active_rule_cards:
-        warnings.append("存在未确认候选规则，已从正式选题生成上下文中排除。")
-    return {"topic_ids": [topic.id for topic in saved], "warnings": warnings}
+    context = build_generation_context(
+        profile=profile,
+        rules=JsonRepository(workspace, RuleCard).list_all(),
+        evidence=JsonRepository(workspace, RuleEvidence).list_all(),
+        provenance=JsonRepository(workspace, ProvenanceRecord).list_all(),
+        decisions=JsonRepository(workspace, DecisionRequest).list_all(),
+        task_constraints=constraints,
+    )
+    result = generate_topics_from_context(context=context, topic_count=args.topic_count)
+    topic_repo = JsonRepository(workspace, TopicItem)
+    saved = [topic_repo.upsert(topic) for topic in result.topics]
+    topic_ids = [topic.id for topic in saved]
+    machine_summary = dict(result.machine_summary)
+    machine_summary["topic_ids"] = topic_ids
+    return {
+        "topic_ids": topic_ids,
+        "topic_count": len(saved),
+        "context_status": result.context_status,
+        "warnings": result.warnings,
+        "user_summary": result.user_summary,
+        "machine_summary": machine_summary,
+    }
+
+
+def resolve_generation_profile_id(profile_id: str | None, creator_id: str | None) -> str:
+    profile = (profile_id or "").strip()
+    creator = (creator_id or "").strip()
+    if not profile and not creator:
+        raise ValueError("必须提供 --profile-id 或 --creator-id。")
+    if profile and creator and profile != creator:
+        raise ValueError("profile-id 和 creator-id 必须一致。")
+    return profile or creator
 
 
 def handle_generate_draft(args: argparse.Namespace) -> dict[str, Any]:

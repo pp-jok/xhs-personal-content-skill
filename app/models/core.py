@@ -612,6 +612,12 @@ class TopicItem(BaseModel):
     reason: str = ""
     status: ContentStatus = "idea"
     tags: list[str] = field(default_factory=list)
+    source_profile_id: str = ""
+    source_profile_version: int | None = None
+    generation_context_status: str = ""
+    task_constraints: dict[str, Any] = field(default_factory=dict)
+    risk_warnings: list[str] = field(default_factory=list)
+    missing_information: list[str] = field(default_factory=list)
 
     def validate(self) -> None:
         require_text(self.title, "title")
@@ -622,6 +628,17 @@ class TopicItem(BaseModel):
         require_text(self.reason, "reason")
         require_literal(self.status, ContentStatus, "status")
         ensure_list_items_are_text(self.tags, "tags")
+        if not isinstance(self.source_profile_id, str):
+            raise ValidationError("source_profile_id must be a string")
+        if self.source_profile_version is not None:
+            ensure_non_negative_int(self.source_profile_version, "source_profile_version")
+            if self.source_profile_version < 1:
+                raise ValidationError("source_profile_version must be at least 1")
+        if self.generation_context_status not in {"", "ready", "limited"}:
+            raise ValidationError("generation_context_status must be empty, ready, or limited")
+        require_dict(self.task_constraints, "task_constraints")
+        ensure_list_items_are_text(self.risk_warnings, "risk_warnings")
+        ensure_list_items_are_text(self.missing_information, "missing_information")
 
 
 @dataclass
