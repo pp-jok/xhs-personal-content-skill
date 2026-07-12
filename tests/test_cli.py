@@ -1707,34 +1707,113 @@ class CliTests(unittest.TestCase):
             self.assertIn("not found", output["error"])
             self.assertEqual(self._snapshot_workspace(data_dir), before)
 
-    def test_generate_draft_passes_only_active_rules_to_prompt(self) -> None:
+    def test_generate_draft_uses_topic_audit_chain_and_writes_one_draft(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir)
             self._seed_data(data_dir)
-            JsonRepository(data_dir, TopicItem).create(
-                TopicItem(
-                    id="topic-001",
-                    title="测试选题",
-                    content_goal="提升收藏",
-                    content_format="图文",
-                    source_rule_cards=[],
-                    reference_posts=["benchmark-post-001"],
-                    reason="测试。",
-                )
-            )
-            for status in ("candidate", "approved", "testing", "validated", "rejected", "deprecated"):
-                self._seed_rule(data_dir, f"rule-{status}", status=status)
-            prompt_service = RecordingPromptService()
+            topic = self._seed_audited_topic(data_dir)
+            for model in (RuleCard, RuleEvidence, DecisionRequest, TopicItem, PublishTask):
+                self.assertEqual(len(JsonRepository(data_dir, model).list_all()), 1 if model is TopicItem else 0)
+            before_protected = {
+                model.collection_name: self._snapshot_collection(data_dir, model)
+                for model in (RuleCard, RuleEvidence, DecisionRequest, TopicItem, PublishTask)
+            }
 
-            with patch("app.cli.main.build_prompt_service", return_value=prompt_service):
-                output = self._run_cli(["generate-draft", "--workspace", temp_dir, "--topic-id", "topic-001"])
+            output = self._run_cli(["generate-draft", "--workspace", temp_dir, "--topic-id", topic.id])
 
-            payload = prompt_service.payloads["generate_content_draft"][0]
+            drafts = JsonRepository(data_dir, ContentDraft).list_all()
             self.assertTrue(output["ok"])
+            self.assertEqual(len(drafts), 1)
+            draft = drafts[0]
+            self.assertEqual(draft.topic_id, topic.id)
+            self.assertEqual(draft.source_profile_id, topic.source_profile_id)
+            self.assertEqual(draft.source_profile_version, topic.source_profile_version)
+            self.assertEqual(draft.source_rule_cards, topic.source_rule_cards)
+            self.assertEqual(draft.generation_context_status, topic.generation_context_status)
+            self.assertEqual(draft.task_constraints, topic.task_constraints)
+            self.assertEqual(draft.risk_warnings, topic.risk_warnings)
+            self.assertEqual(draft.missing_information, topic.missing_information)
+            self.assertIn("diagnosis", output["result"]["machine_summary"])
+            self.assertEqual(output["result"]["machine_summary"]["draft_id"], draft.id)
+            self.assertEqual(output["result"]["machine_summary"]["topic_id"], topic.id)
+            self.assertIn("已生成 1 个草稿", output["result"]["user_summary"])
+            for forbidden in ("creator-main", topic.id, draft.id, "rule-a", "ready", "limited", "ContentDraft", ".json", "/Users/"):
+                self.assertNotIn(forbidden, output["result"]["user_summary"])
+            self.assertEqual(JsonRepository(data_dir, PublishTask).list_all(), [])
             self.assertEqual(
-                [rule["id"] for rule in payload["rule_cards"]],
-                ["rule-approved", "rule-testing", "rule-validated"],
+                {
+                    model.collection_name: self._snapshot_collection(data_dir, model)
+                    for model in (RuleCard, RuleEvidence, DecisionRequest, TopicItem, PublishTask)
+                },
+                before_protected,
             )
+
+    def test_generate_draft_missing_topic_fails_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+
+            output = self._run_cli(["generate-draft", "--workspace", temp_dir, "--topic-id", "missing-topic"], expected_code=1)
+
+            self.assertFalse(output["ok"])
+            self.assertEqual(JsonRepository(data_dir, ContentDraft).list_all(), [])
+            self.assertEqual(JsonRepository(data_dir, PublishTask).list_all(), [])
+
+    def test_revise_draft_creates_new_draft_without_overwriting_original(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            topic = self._seed_audited_topic(data_dir)
+            generated = self._run_cli(["generate-draft", "--workspace", temp_dir, "--topic-id", topic.id])
+            original = JsonRepository(data_dir, ContentDraft).read(generated["result"]["draft_id"])
+            before_original = original.to_dict()
+            before_topic = self._snapshot_collection(data_dir, TopicItem)
+            before_rules = self._snapshot_collection(data_dir, RuleCard)
+
+            output = self._run_cli(
+                ["revise-draft", "--workspace", temp_dir, "--draft-id", original.id, "--focus", "开头更直接"]
+            )
+
+            drafts = JsonRepository(data_dir, ContentDraft).list_all()
+            self.assertTrue(output["ok"])
+            self.assertEqual(len(drafts), 2)
+            revised = JsonRepository(data_dir, ContentDraft).read(output["result"]["draft_id"])
+            self.assertEqual(revised.parent_draft_id, original.id)
+            self.assertEqual(revised.revision_focus, "开头更直接")
+            self.assertEqual(revised.topic_id, original.topic_id)
+            self.assertEqual(revised.source_profile_id, original.source_profile_id)
+            self.assertEqual(revised.source_rule_cards, original.source_rule_cards)
+            self.assertEqual(JsonRepository(data_dir, ContentDraft).read(original.id).to_dict(), before_original)
+            self.assertEqual(self._snapshot_collection(data_dir, TopicItem), before_topic)
+            self.assertEqual(self._snapshot_collection(data_dir, RuleCard), before_rules)
+            self.assertEqual(JsonRepository(data_dir, PublishTask).list_all(), [])
+            self.assertIn("已生成 1 个修订草稿", output["result"]["user_summary"])
+            self.assertEqual(output["result"]["machine_summary"]["parent_draft_id"], original.id)
+            self.assertEqual(output["result"]["machine_summary"]["revision_focus"], "开头更直接")
+            for forbidden in (original.id, revised.id, "rule-a", "ContentDraft", "ready", "limited", ".json", "/Users/"):
+                self.assertNotIn(forbidden, output["result"]["user_summary"])
+
+    def test_revise_draft_missing_or_empty_focus_fails_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            topic = self._seed_audited_topic(data_dir)
+            generated = self._run_cli(["generate-draft", "--workspace", temp_dir, "--topic-id", topic.id])
+            before = self._snapshot_collection(data_dir, ContentDraft)
+
+            missing = self._run_cli(
+                ["revise-draft", "--workspace", temp_dir, "--draft-id", "missing-draft", "--focus", "开头更直接"],
+                expected_code=1,
+            )
+            empty = self._run_cli(
+                ["revise-draft", "--workspace", temp_dir, "--draft-id", generated["result"]["draft_id"], "--focus", "   "],
+                expected_code=1,
+            )
+
+            self.assertFalse(missing["ok"])
+            self.assertFalse(empty["ok"])
+            self.assertEqual(self._snapshot_collection(data_dir, ContentDraft), before)
+            self.assertEqual(JsonRepository(data_dir, PublishTask).list_all(), [])
 
     def test_review_own_post_passes_only_active_rules_to_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1851,7 +1930,8 @@ class CliTests(unittest.TestCase):
             self.assertTrue(rules["ok"])
             self.assertEqual(rules["result"]["rule_card_ids"], ["rule-card-from-benchmark-post-001-1"])
             self.assertEqual(len(topics["result"]["topic_ids"]), 2)
-            self.assertEqual(draft["result"]["draft_id"], f"draft-from-{topics['result']['topic_ids'][0]}")
+            saved_draft = JsonRepository(data_dir, ContentDraft).read(draft["result"]["draft_id"])
+            self.assertEqual(saved_draft.topic_id, topics["result"]["topic_ids"][0])
             self.assertEqual(publish["result"]["publish_task_id"], f"publish-task-from-{draft['result']['draft_id']}")
             self.assertEqual(review["result"]["review_record_id"], "review-from-own-post-001")
             self.assertTrue((data_dir / "review-records" / "review-from-own-post-001.json").exists())
@@ -2860,6 +2940,27 @@ class CliTests(unittest.TestCase):
                 resolved_by="user",
             )
         )
+
+    def _seed_audited_topic(self, data_dir: Path) -> TopicItem:
+        topic = TopicItem(
+            id="topic-audit-001",
+            title="新人入职前三天如何快速进入状态",
+            content_goal="帮助刚入职的新人明确前三天行动",
+            content_format="清单",
+            source_rule_cards=["rule-a", "rule-b"],
+            reference_posts=["benchmark-post-001"],
+            reason="基于账号定位和已确认规则。",
+            status="idea",
+            tags=["新人入职", "图文"],
+            source_profile_id="creator-main",
+            source_profile_version=2,
+            generation_context_status="limited",
+            task_constraints={"topic_area": "新人入职", "content_type": "图文"},
+            risk_warnings=["规则缺少独立证据记录"],
+            missing_information=["规则缺少独立证据记录"],
+            created_by="codex",
+        )
+        return JsonRepository(data_dir, TopicItem).create(topic)
 
     def _snapshot_workspace(self, data_dir: Path) -> dict[str, str]:
         return {
