@@ -283,7 +283,8 @@ python3 -m app.cli.main add-feedback \
 ```text
 已确认规则
 → show-generation-context
-→ 后续选题或草稿流程
+→ generate-topics
+→ 后续 PR-4D 草稿流程
 ```
 
 ```bash
@@ -314,7 +315,37 @@ python3 -m app.cli show-generation-context \
 
 如果可用规则缺少独立 `RuleEvidence`，命令会提示“缺少独立证据记录”，但不会用 `RuleCard.examples` 伪造证据。如果规则无法通过 `ProvenanceRecord` 验证账号档案来源，或来源版本与当前账号档案不一致，命令也会提示风险。
 
-返回结果包含普通语言 `user_summary` 和后续流程可读取的 `machine_summary`。PR-4C / PR-4D 尚未实现；现有 `generate-topics`、`generate-draft` 等命令尚未接入中央上下文。
+返回结果包含普通语言 `user_summary` 和后续流程可读取的 `machine_summary`。`generate-topics` 已接入中央上下文；`generate-draft` 尚未接入中央上下文，后续 PR-4D 再处理草稿生成。
+
+## 基于中央上下文生成选题
+
+推荐新路径：
+
+```bash
+python3 -m app.cli generate-topics \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --profile-id creator-main \
+  --topic-count 3 \
+  --intent "准备后续选题" \
+  --content-type "图文" \
+  --topic-area "新人入职" \
+  --target-audience "刚入职的新人" \
+  --format "清单" \
+  --tone "直接、具体" \
+  --do "给出可执行步骤" \
+  --dont "夸大效果" \
+  --reference-id benchmark-post-001
+```
+
+`generate-topics` 会先构建非持久化 GenerationContext，再基于可用规则生成 `TopicItem`。它只创建选题，不创建 `ContentDraft`，不创建 `PublishTask`，不调用真实 LLM，也不会自动批准候选规则。
+
+推荐使用 `--profile-id`。`--creator-id` 仍作为兼容别名可用；如果两者同时出现，必须指向同一个账号档案。`--benchmark-post-id` 仅作为参考来源加入 `reference-id`，不再驱动规则生成，也不会因为某篇对标帖缺少规则而自动创建规则。
+
+正式选题只使用 `approved`、`testing`、`validated` 规则。`candidate`、`rejected`、`deprecated` 不进入选题。没有可用规则时不会生成正式选题，需要先确认至少一条规则。
+
+当上下文为 limited 但仍有可用规则时，命令会生成选题并在 `warnings` 与 `user_summary` 中说明限制，例如缺少独立证据、账号档案来源不可验证或来源版本不一致。
+
+JSON repository 没有数据库事务。命令会先构造并校验全部 `TopicItem`，再写入；如果写入阶段失败，系统会返回明确错误，但不会声称写入具有事务原子性。
 
 ## 校验工作区
 
@@ -606,14 +637,18 @@ python3 -m app.cli.main generate-rule-cards \
 ## 生成选题
 
 ```bash
-python3 -m app.cli.main generate-topics \
+python3 -m app.cli generate-topics \
   --workspace .xhs-personal-content-skill/real-sample \
-  --creator-id creator-main \
-  --benchmark-post-id benchmark-post-001 \
-  --topic-count 5
+  --profile-id creator-main \
+  --topic-count 3 \
+  --intent "准备后续选题" \
+  --content-type "图文" \
+  --topic-area "新人入职" \
+  --target-audience "刚入职的新人" \
+  --format "清单"
 ```
 
-该命令会读取账号档案、标签、规则卡和指定对标帖，生成结构化选题记录。
+该命令基于中央生成上下文创建结构化选题记录。旧 `--creator-id` 仍可作为 `--profile-id` 的兼容别名；旧 `--benchmark-post-id` 只作为参考来源，不再自动生成规则。
 
 ## 生成草稿
 

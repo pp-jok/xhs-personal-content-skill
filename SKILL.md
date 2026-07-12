@@ -166,10 +166,15 @@ When generating topics, drafts, or tasks, ground the output in accumulated accou
 
 - Before later topic or draft work, prefer `show-generation-context` with an explicit profile id to inspect the current non-persistent central context.
 - Treat that context as read-only: it does not create topics, drafts, rules, or decisions, and it does not call a model.
+- For topic generation, use `generate-topics` with an explicit `--profile-id` and task constraints. It builds GenerationContext first and creates only `TopicItem` candidates.
+- `--creator-id` is only a compatibility alias for `--profile-id`. `--benchmark-post-id` is only a reference id and must not trigger rule generation.
+- If there are no usable rules, do not generate formal topics. Ask the user to confirm at least one candidate rule first.
+- A limited context can still generate topics when at least one usable rule exists, but explain the limitation in ordinary language.
 - Mention which account preference or rule influenced the result.
 - Use only active rules by default: `approved`, `testing`, and `validated`.
 - Do not use `candidate`, `rejected`, or `deprecated` rules in formal generation. Candidate rules stay under `【需要你决定】` until confirmed.
 - If a usable rule lacks independent evidence or profile provenance cannot be verified, say that clearly and use it conservatively; never invent evidence from examples or rule text.
+- PR-4C does not generate drafts, cover copy, scripts, publish tasks, or call a real LLM.
 - Avoid generic content advice.
 - If context is insufficient, say what kind of sample would improve the next round.
 - Do not describe the output as coming from mock or internal services in normal conversation.
@@ -592,13 +597,13 @@ Generate structured local artifacts for pipeline validation:
 
 ```bash
 python3 -m app.cli generate-rule-cards --workspace .xhs-personal-content-skill/real-sample --creator-id creator-main --benchmark-post-id benchmark-post-001
-python3 -m app.cli generate-topics --workspace .xhs-personal-content-skill/real-sample --creator-id creator-main --benchmark-post-id benchmark-post-001 --topic-count 5
-python3 -m app.cli generate-draft --workspace .xhs-personal-content-skill/real-sample --topic-id topic-from-benchmark-post-001-1
-python3 -m app.cli create-publish-task --workspace .xhs-personal-content-skill/real-sample --draft-id draft-from-topic-from-benchmark-post-001-1 --planned-publish-time 2026-07-05T20:00:00+08:00
+python3 -m app.cli generate-topics --workspace .xhs-personal-content-skill/real-sample --profile-id creator-main --topic-count 3 --intent "准备后续选题" --content-type "图文" --topic-area "新人入职" --target-audience "刚入职的新人" --format "清单"
+python3 -m app.cli generate-draft --workspace .xhs-personal-content-skill/real-sample --topic-id <topic-id>
+python3 -m app.cli create-publish-task --workspace .xhs-personal-content-skill/real-sample --draft-id <draft-id> --planned-publish-time 2026-07-05T20:00:00+08:00
 python3 -m app.cli review-own-post --workspace .xhs-personal-content-skill/real-sample --own-post-id own-post-001
 ```
 
-These generation commands are for stable file creation and validation. For user-facing quality, Codex should read the local context and generate the final topics, drafts, and feedback in conversation.
+These generation commands are for stable file creation and validation. Topic generation is now context-based; draft and publish commands remain separate later steps.
 
 ## Output Discipline
 

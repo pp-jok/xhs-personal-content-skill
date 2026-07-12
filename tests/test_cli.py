@@ -25,6 +25,7 @@ from app.models.core import (  # noqa: E402
     CustomTag,
     DecisionRequest,
     OwnPost,
+    PublishTask,
     ProvenanceRecord,
     RuleCard,
     RuleEvidence,
@@ -1412,33 +1413,171 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(saved.id, "prov-helper-valid")
 
-    def test_generate_topics_passes_only_active_rules_to_prompt(self) -> None:
+    def test_generate_topics_uses_generation_context_and_writes_audited_topics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir)
             self._seed_data(data_dir)
-            for status in ("candidate", "approved", "testing", "validated", "rejected", "deprecated"):
-                self._seed_rule(data_dir, f"rule-{status}", status=status)
-            prompt_service = RecordingPromptService()
+            approved = self._seed_rule(data_dir, "rule-approved", status="approved", summary="标题点名具体对象")
+            testing = self._seed_rule(data_dir, "rule-testing", status="testing", summary="正文保留行动步骤", scenarios=["正文结构"])
+            candidate = self._seed_rule(data_dir, "rule-candidate", status="candidate")
+            rejected = self._seed_rule(data_dir, "rule-rejected", status="rejected")
+            deprecated = self._seed_rule(data_dir, "rule-deprecated", status="deprecated")
+            self._seed_rule_generation_support(data_dir, approved.id, profile_version=1)
+            self._seed_rule_generation_support(data_dir, testing.id, profile_version=99, evidence=False)
+            before_rules = self._snapshot_collection(data_dir, RuleCard)
+            before_evidence = self._snapshot_collection(data_dir, RuleEvidence)
+            before_decisions = self._snapshot_collection(data_dir, DecisionRequest)
 
-            with patch("app.cli.main.build_prompt_service", return_value=prompt_service):
-                output = self._run_cli(
-                    [
-                        "generate-topics",
-                        "--workspace",
-                        temp_dir,
-                        "--creator-id",
-                        "creator-main",
-                        "--benchmark-post-id",
-                        "benchmark-post-001",
-                    ]
-                )
-
-            payload = prompt_service.payloads["generate_topic_pool"][0]
-            self.assertTrue(output["ok"])
-            self.assertEqual(
-                [rule["id"] for rule in payload["rule_cards"]],
-                ["rule-approved", "rule-testing", "rule-validated"],
+            output = self._run_cli(
+                [
+                    "generate-topics",
+                    "--workspace",
+                    temp_dir,
+                    "--profile-id",
+                    "creator-main",
+                    "--topic-count",
+                    "3",
+                    "--intent",
+                    "准备后续选题",
+                    "--content-type",
+                    "图文",
+                    "--topic-area",
+                    "新人入职",
+                    "--target-audience",
+                    "刚入职的新人",
+                    "--format",
+                    "清单",
+                    "--tone",
+                    "直接、具体",
+                    "--do",
+                    "给出可执行步骤",
+                    "--dont",
+                    "夸大效果",
+                    "--benchmark-post-id",
+                    "benchmark-post-001",
+                ]
             )
+
+            topics = JsonRepository(data_dir, TopicItem).list_all()
+            self.assertTrue(output["ok"])
+            self.assertEqual(output["result"]["topic_count"], 3)
+            self.assertEqual(output["result"]["context_status"], "limited")
+            self.assertIn("user_summary", output["result"])
+            self.assertEqual(len(topics), 3)
+            for topic in topics:
+                self.assertEqual(topic.source_profile_id, "creator-main")
+                self.assertEqual(topic.source_profile_version, 1)
+                self.assertEqual(topic.generation_context_status, "limited")
+                self.assertEqual(topic.task_constraints["topic_area"], "新人入职")
+                self.assertEqual(topic.reference_posts, ["benchmark-post-001"])
+                self.assertEqual(topic.source_rule_cards, [approved.id, testing.id])
+                self.assertNotIn(candidate.id, topic.source_rule_cards)
+                self.assertNotIn(rejected.id, topic.source_rule_cards)
+                self.assertNotIn(deprecated.id, topic.source_rule_cards)
+            self.assertEqual(self._snapshot_collection(data_dir, RuleCard), before_rules)
+            self.assertEqual(self._snapshot_collection(data_dir, RuleEvidence), before_evidence)
+            self.assertEqual(self._snapshot_collection(data_dir, DecisionRequest), before_decisions)
+            self.assertEqual(JsonRepository(data_dir, ContentDraft).list_all(), [])
+            self.assertEqual(JsonRepository(data_dir, PublishTask).list_all(), [])
+            json.dumps(output["result"]["machine_summary"], ensure_ascii=False)
+            self.assertEqual(set(output["result"]["machine_summary"]["topic_ids"]), {topic.id for topic in topics})
+
+    def test_generate_topics_supports_creator_alias_and_benchmark_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            approved = self._seed_rule(data_dir, "rule-approved", status="approved")
+            self._seed_rule_generation_support(data_dir, approved.id)
+
+            output = self._run_cli(
+                [
+                    "generate-topics",
+                    "--workspace",
+                    temp_dir,
+                    "--creator-id",
+                    "creator-main",
+                    "--benchmark-post-id",
+                    "benchmark-post-001",
+                    "--reference-id",
+                    "benchmark-post-001",
+                    "--topic-count",
+                    "1",
+                ]
+            )
+
+            topic = JsonRepository(data_dir, TopicItem).read(output["result"]["topic_ids"][0])
+            self.assertTrue(output["ok"])
+            self.assertEqual(topic.reference_posts, ["benchmark-post-001"])
+
+    def test_generate_topics_rejects_profile_conflict_missing_profile_and_no_usable_rules_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+
+            conflict = self._run_cli(
+                [
+                    "generate-topics",
+                    "--workspace",
+                    temp_dir,
+                    "--profile-id",
+                    "creator-main",
+                    "--creator-id",
+                    "creator-other",
+                ],
+                expected_code=1,
+            )
+            missing = self._run_cli(
+                ["generate-topics", "--workspace", temp_dir, "--profile-id", "missing-profile"],
+                expected_code=1,
+            )
+            no_rules = self._run_cli(
+                ["generate-topics", "--workspace", temp_dir, "--profile-id", "creator-main"],
+                expected_code=1,
+            )
+
+            self.assertIn("profile-id 和 creator-id 必须一致", conflict["error"])
+            self.assertIn("not found", missing["error"])
+            self.assertIn("没有可用规则", no_rules["error"])
+            self.assertEqual(JsonRepository(data_dir, TopicItem).list_all(), [])
+
+    def test_generate_topics_user_summary_hides_internal_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            approved = self._seed_rule(data_dir, "rule-secret-topic", status="approved")
+            self._seed_rule_generation_support(data_dir, approved.id)
+
+            output = self._run_cli(
+                [
+                    "generate-topics",
+                    "--workspace",
+                    temp_dir,
+                    "--profile-id",
+                    "creator-main",
+                    "--topic-count",
+                    "1",
+                ]
+            )
+
+            summary = output["result"]["user_summary"]
+            for text in (
+                "creator-main",
+                approved.id,
+                output["result"]["topic_ids"][0],
+                "TopicItem",
+                "RuleCard",
+                "GenerationContext",
+                "approved",
+                "testing",
+                "validated",
+                "candidate",
+                "ready",
+                "limited",
+                ".py",
+                ".json",
+                "/Users/",
+            ):
+                self.assertNotIn(text, summary)
 
     def test_show_generation_context_returns_safe_read_only_context(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1657,6 +1796,7 @@ class CliTests(unittest.TestCase):
                     "benchmark-post-001",
                 ]
             )
+            self._run_cli(["approve-rule", "--workspace", temp_dir, "--rule-id", rules["result"]["rule_card_ids"][0]])
             topics = self._run_cli(
                 [
                     "--prompts-dir",
@@ -1680,7 +1820,7 @@ class CliTests(unittest.TestCase):
                     "--workspace",
                     temp_dir,
                     "--topic-id",
-                    "topic-from-benchmark-post-001-1",
+                    topics["result"]["topic_ids"][0],
                 ]
             )
             publish = self._run_cli(
@@ -1711,8 +1851,8 @@ class CliTests(unittest.TestCase):
             self.assertTrue(rules["ok"])
             self.assertEqual(rules["result"]["rule_card_ids"], ["rule-card-from-benchmark-post-001-1"])
             self.assertEqual(len(topics["result"]["topic_ids"]), 2)
-            self.assertEqual(draft["result"]["draft_id"], "draft-from-topic-from-benchmark-post-001-1")
-            self.assertEqual(publish["result"]["publish_task_id"], "publish-task-from-draft-from-topic-from-benchmark-post-001-1")
+            self.assertEqual(draft["result"]["draft_id"], f"draft-from-{topics['result']['topic_ids'][0]}")
+            self.assertEqual(publish["result"]["publish_task_id"], f"publish-task-from-{draft['result']['draft_id']}")
             self.assertEqual(review["result"]["review_record_id"], "review-from-own-post-001")
             self.assertTrue((data_dir / "review-records" / "review-from-own-post-001.json").exists())
 
@@ -2668,11 +2808,67 @@ class CliTests(unittest.TestCase):
         JsonRepository(data_dir, RuleCard).create(rule)
         return rule
 
+    def _seed_rule_generation_support(
+        self,
+        data_dir: Path,
+        rule_id: str,
+        *,
+        profile_version: int = 1,
+        evidence: bool = True,
+    ) -> None:
+        if evidence:
+            JsonRepository(data_dir, RuleEvidence).create(
+                RuleEvidence(
+                    id=f"evidence-{rule_id}",
+                    rule_id=rule_id,
+                    source_type="benchmark_analysis",
+                    source_id="analysis-001",
+                    source_fragment="标题",
+                    evidence_type="title",
+                    observable_fact="标题点名具体对象。",
+                    inference="用于支持选题生成。",
+                )
+            )
+        JsonRepository(data_dir, ProvenanceRecord).create(
+            ProvenanceRecord(
+                id=f"provenance-{rule_id}",
+                target_object_type="rule_card",
+                target_object_id=rule_id,
+                source_object_type="creator_profile",
+                source_object_id="creator-main",
+                source_version=profile_version,
+                actor="codex",
+                artifact_nature="recommendation",
+                method="test",
+                note="账号档案来源。",
+            )
+        )
+        JsonRepository(data_dir, DecisionRequest).create(
+            DecisionRequest(
+                id=f"decision-{rule_id}",
+                target_object_type="rule_card",
+                target_object_id=rule_id,
+                question="是否采用？",
+                options=["确认使用", "暂不使用"],
+                option_outcomes={"确认使用": "confirmed", "暂不使用": "rejected"},
+                recommendation="确认使用",
+                recommendation_reason="测试。",
+                impact="测试。",
+                status="confirmed",
+                selected_option="确认使用",
+                resolved_at="2026-07-11T00:00:00Z",
+                resolved_by="user",
+            )
+        )
+
     def _snapshot_workspace(self, data_dir: Path) -> dict[str, str]:
         return {
             str(path.relative_to(data_dir)): path.read_text(encoding="utf-8")
             for path in sorted(data_dir.rglob("*.json"))
         }
+
+    def _snapshot_collection(self, data_dir: Path, model: type) -> dict[str, dict[str, Any]]:
+        return {item.id: item.to_dict() for item in JsonRepository(data_dir, model).list_all()}
 
     def _seed_draft_and_rules_for_quality(self, data_dir: Path) -> None:
         JsonRepository(data_dir, ContentDraft).create(
