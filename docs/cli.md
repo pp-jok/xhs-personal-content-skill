@@ -284,7 +284,9 @@ python3 -m app.cli.main add-feedback \
 已确认规则
 → show-generation-context
 → generate-topics
-→ 后续 PR-4D 草稿流程
+→ generate-draft
+→ revise-draft
+→ create-publish-task
 ```
 
 ```bash
@@ -315,7 +317,7 @@ python3 -m app.cli show-generation-context \
 
 如果可用规则缺少独立 `RuleEvidence`，命令会提示“缺少独立证据记录”，但不会用 `RuleCard.examples` 伪造证据。如果规则无法通过 `ProvenanceRecord` 验证账号档案来源，或来源版本与当前账号档案不一致，命令也会提示风险。
 
-返回结果包含普通语言 `user_summary` 和后续流程可读取的 `machine_summary`。`generate-topics` 已接入中央上下文；`generate-draft` 尚未接入中央上下文，后续 PR-4D 再处理草稿生成。
+返回结果包含普通语言 `user_summary` 和后续流程可读取的 `machine_summary`。`generate-topics` 已接入中央上下文；`generate-draft` 会读取已选 `TopicItem` 保存的审计字段，不重新构造上下文。
 
 ## 基于中央上下文生成选题
 
@@ -653,12 +655,27 @@ python3 -m app.cli generate-topics \
 ## 生成草稿
 
 ```bash
-python3 -m app.cli.main generate-draft \
+python3 -m app.cli generate-draft \
   --workspace .xhs-personal-content-skill/real-sample \
-  --topic-id topic-from-benchmark-post-001-1
+  --topic-id <topic-id>
 ```
 
-该命令会生成标题、封面文案、脚本和简单分镜结构，适合用于验证落盘流程。高质量草稿仍应由 Codex 会话读取上下文后生成。
+该命令基于一个已选 `TopicItem` 生成一个 `ContentDraft`。它会保留选题中的账号档案版本、来源规则、任务约束、上下文状态、风险和缺失信息，并返回简短诊断。
+
+`generate-draft` 一次只生成 1 个草稿，不创建 `PublishTask`，不发布，不调用真实 LLM，不修改 `TopicItem`、`RuleCard`、`DecisionRequest` 或 `RuleEvidence`。
+
+## 聚焦修订草稿
+
+```bash
+python3 -m app.cli revise-draft \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --draft-id <draft-id> \
+  --focus "开头更直接"
+```
+
+`revise-draft` 必须指定一个明确 focus。它只围绕该 focus 创建 1 个新的修订草稿，保存 `parent_draft_id` 和 `revision_focus`，不会覆盖原稿，也不会创建发布任务。
+
+PR-4D 不是自动多轮修稿系统。每次修订都应由用户明确选择一个 focus。
 
 ## 创建发布任务
 

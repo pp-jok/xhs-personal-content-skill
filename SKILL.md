@@ -174,7 +174,9 @@ When generating topics, drafts, or tasks, ground the output in accumulated accou
 - Use only active rules by default: `approved`, `testing`, and `validated`.
 - Do not use `candidate`, `rejected`, or `deprecated` rules in formal generation. Candidate rules stay under `【需要你决定】` until confirmed.
 - If a usable rule lacks independent evidence or profile provenance cannot be verified, say that clearly and use it conservatively; never invent evidence from examples or rule text.
-- PR-4C does not generate drafts, cover copy, scripts, publish tasks, or call a real LLM.
+- For draft generation, use one selected `TopicItem`. The generated draft must preserve the topic audit chain and return a concise diagnosis.
+- For revision, ask the user for exactly one focused revision goal, then create a new revised draft. Do not overwrite the original draft.
+- Draft generation and focused revision do not create publish tasks, publish content, or call a real LLM.
 - Avoid generic content advice.
 - If context is insufficient, say what kind of sample would improve the next round.
 - Do not describe the output as coming from mock or internal services in normal conversation.
@@ -383,6 +385,8 @@ Action:
 3. For each topic include: title, goal, format, source rule/sample, why it fits the account, risk to watch.
 4. Prefer 5-10 topics when the user does not specify a count.
 5. Reply with the topic list and ask which one to expand into a draft.
+6. When generating a draft, produce one draft from one selected topic and explain the concise diagnosis.
+7. If the user wants changes, ask for one focused revision goal and create one revised draft while keeping the original draft.
 
 For drafts:
 
@@ -599,6 +603,7 @@ Generate structured local artifacts for pipeline validation:
 python3 -m app.cli generate-rule-cards --workspace .xhs-personal-content-skill/real-sample --creator-id creator-main --benchmark-post-id benchmark-post-001
 python3 -m app.cli generate-topics --workspace .xhs-personal-content-skill/real-sample --profile-id creator-main --topic-count 3 --intent "准备后续选题" --content-type "图文" --topic-area "新人入职" --target-audience "刚入职的新人" --format "清单"
 python3 -m app.cli generate-draft --workspace .xhs-personal-content-skill/real-sample --topic-id <topic-id>
+python3 -m app.cli revise-draft --workspace .xhs-personal-content-skill/real-sample --draft-id <draft-id> --focus "开头更直接"
 python3 -m app.cli create-publish-task --workspace .xhs-personal-content-skill/real-sample --draft-id <draft-id> --planned-publish-time 2026-07-05T20:00:00+08:00
 python3 -m app.cli review-own-post --workspace .xhs-personal-content-skill/real-sample --own-post-id own-post-001
 ```

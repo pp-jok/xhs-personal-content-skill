@@ -20,7 +20,13 @@ from app.decisions import (
     persist_candidate_rule_decision_resolution,
     resolve_candidate_rule_decision,
 )
-from app.generation import GenerationTaskConstraints, generate_topics_from_context, build_generation_context
+from app.generation import (
+    GenerationTaskConstraints,
+    build_generation_context,
+    generate_draft_from_topic,
+    generate_topics_from_context,
+    revise_draft_with_focus,
+)
 from app.models.core import (
     MODEL_TYPES,
     Actor,
@@ -385,6 +391,12 @@ def build_parser() -> argparse.ArgumentParser:
     draft_parser.add_argument("--workspace", required=True, help="Workspace directory.")
     draft_parser.add_argument("--topic-id", required=True, help="TopicItem id.")
     draft_parser.set_defaults(handler=handle_generate_draft)
+
+    revise_parser = subparsers.add_parser("revise-draft", help="Create one focused revised ContentDraft.")
+    revise_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    revise_parser.add_argument("--draft-id", required=True, help="ContentDraft id.")
+    revise_parser.add_argument("--focus", required=True, help="Single revision focus.")
+    revise_parser.set_defaults(handler=handle_revise_draft)
 
     publish_parser = subparsers.add_parser("create-publish-task", help="Create a publish task for one draft.")
     publish_parser.add_argument("--workspace", required=True, help="Workspace directory.")
@@ -1217,20 +1229,43 @@ def handle_generate_draft(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
     topic = JsonRepository(workspace, TopicItem).read(args.topic_id)
-    creator = first_record(workspace, CreatorProfile)
-    tags = JsonRepository(workspace, CustomTag).list_all()
-    rule_cards = select_active_rule_cards(JsonRepository(workspace, RuleCard).list_all())
-    draft_payload = build_prompt_service(args.prompts_dir).run(
-        "generate_content_draft",
-        {
-            "creator_profile": creator.to_dict(),
-            "topic": topic.to_dict(),
-            "rule_cards": [rule.to_dict() for rule in rule_cards],
-            "custom_tags": [tag.to_dict() for tag in tags],
-        },
+    result = generate_draft_from_topic(topic=topic)
+    saved = JsonRepository(workspace, ContentDraft).upsert(
+        result.draft,
+        changed_by="codex",
+        change_note="generate-draft",
     )
-    saved = save_draft(workspace, args.topic_id, draft_payload["draft"])
-    return {"draft_id": saved.id, "warnings": draft_payload.get("warnings", [])}
+    machine_summary = dict(result.machine_summary)
+    machine_summary["draft_id"] = saved.id
+    return {
+        "draft_id": saved.id,
+        "topic_id": saved.topic_id,
+        "warnings": result.warnings,
+        "user_summary": result.user_summary,
+        "machine_summary": machine_summary,
+    }
+
+
+def handle_revise_draft(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    draft = JsonRepository(workspace, ContentDraft).read(args.draft_id)
+    result = revise_draft_with_focus(draft=draft, focus=args.focus)
+    saved = JsonRepository(workspace, ContentDraft).upsert(
+        result.draft,
+        changed_by="codex",
+        change_note="revise-draft",
+    )
+    machine_summary = dict(result.machine_summary)
+    machine_summary["draft_id"] = saved.id
+    return {
+        "draft_id": saved.id,
+        "parent_draft_id": saved.parent_draft_id,
+        "revision_focus": saved.revision_focus,
+        "warnings": result.warnings,
+        "user_summary": result.user_summary,
+        "machine_summary": machine_summary,
+    }
 
 
 def handle_create_publish_task(args: argparse.Namespace) -> dict[str, Any]:
