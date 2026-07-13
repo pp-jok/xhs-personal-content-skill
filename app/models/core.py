@@ -23,6 +23,15 @@ RuleType = Literal["title", "structure", "topic", "cover", "script", "operation"
 RuleStatus = Literal["candidate", "approved", "testing", "validated", "rejected", "deprecated"]
 RuleStrength = Literal["weak", "medium", "strong"]
 RuleEvidenceSourceType = Literal["benchmark_post", "benchmark_analysis", "user_feedback", "own_post", "review_record"]
+ContentMechanismStatus = Literal["candidate", "active", "deprecated"]
+ContentMechanismConfidenceLevel = Literal["low", "medium", "high"]
+ContentMechanismSourceType = Literal[
+    "benchmark_post",
+    "benchmark_analysis",
+    "capture_record",
+    "external_analysis",
+    "user_input",
+]
 FeedbackNature = Literal[
     "explicit_user_rule",
     "content_specific_feedback",
@@ -118,6 +127,13 @@ def ensure_non_negative_int(value: int, field_name: str) -> None:
 def ensure_score(value: int, field_name: str) -> None:
     if not isinstance(value, int) or not 0 <= value <= 5:
         raise ValidationError(f"{field_name} must be an integer from 0 to 5")
+
+
+CONTENT_MECHANISM_CONFIDENCE_SCORES: dict[ContentMechanismConfidenceLevel, float] = {
+    "low": 0.4,
+    "medium": 0.6,
+    "high": 0.8,
+}
 
 
 @dataclass
@@ -386,6 +402,65 @@ class BenchmarkAnalysis(BaseModel):
         ensure_list_items_are_text(self.candidate_rule_ids, "candidate_rule_ids")
         ensure_list_items_are_text(self.derived_topic_ids, "derived_topic_ids")
         ensure_list_items_are_text(self.uncertainties, "uncertainties")
+
+
+@dataclass
+class ContentMechanism(BaseModel):
+    collection_name: ClassVar[str] = "content-mechanisms"
+
+    confidence: float = 0.4
+    name: str = ""
+    description: str = ""
+    status: ContentMechanismStatus = "candidate"
+    confidence_level: ContentMechanismConfidenceLevel = "low"
+    source_refs: list[dict[str, str]] = field(default_factory=list)
+    evidence_summary: dict[str, Any] = field(default_factory=dict)
+    problem: str = ""
+    solution: str = ""
+    pattern: list[str] = field(default_factory=list)
+    applicable_scope: list[str] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ContentMechanism":
+        require_dict(data, cls.__name__)
+        normalized = dict(data)
+        confidence_level = normalized.get("confidence_level", "low")
+        if "confidence" not in normalized and confidence_level in CONTENT_MECHANISM_CONFIDENCE_SCORES:
+            normalized["confidence"] = CONTENT_MECHANISM_CONFIDENCE_SCORES[confidence_level]
+        return super().from_dict(normalized)
+
+    def validate(self) -> None:
+        require_text(self.name, "name")
+        require_text(self.description, "description")
+        require_literal(self.status, ContentMechanismStatus, "status")
+        require_literal(self.confidence_level, ContentMechanismConfidenceLevel, "confidence_level")
+        expected_confidence = CONTENT_MECHANISM_CONFIDENCE_SCORES[self.confidence_level]
+        if float(self.confidence) != expected_confidence:
+            raise ValidationError("confidence must match confidence_level")
+        require_list(self.source_refs, "source_refs")
+        for item in self.source_refs:
+            require_dict(item, "source_refs item")
+            if set(item) != {"source_type", "source_id"}:
+                raise ValidationError("source_refs item must contain source_type and source_id")
+            require_literal(item["source_type"], ContentMechanismSourceType, "source_type")
+            require_text(item["source_id"], "source_id")
+        require_dict(self.evidence_summary, "evidence_summary")
+        observed_facts = self.evidence_summary.get("observed_facts")
+        ensure_list_items_are_text(observed_facts, "evidence_summary.observed_facts")
+        for field_name in ("inferences", "user_stated_preferences", "missing_information", "limitations"):
+            if field_name in self.evidence_summary:
+                ensure_list_items_are_text(self.evidence_summary[field_name], f"evidence_summary.{field_name}")
+        if "source_coverage" in self.evidence_summary:
+            require_dict(self.evidence_summary["source_coverage"], "evidence_summary.source_coverage")
+            for key, value in self.evidence_summary["source_coverage"].items():
+                require_text(key, "evidence_summary.source_coverage key")
+                require_text(value, "evidence_summary.source_coverage value")
+        ensure_optional_text(self.problem, "problem")
+        ensure_optional_text(self.solution, "solution")
+        ensure_list_items_are_text(self.pattern, "pattern")
+        ensure_list_items_are_text(self.applicable_scope, "applicable_scope")
+        ensure_list_items_are_text(self.limitations, "limitations")
 
 
 @dataclass
@@ -812,6 +887,7 @@ MODEL_TYPES: dict[str, type[BaseModel]] = {
         ContentInboxItem,
         CaptureRecord,
         BenchmarkAnalysis,
+        ContentMechanism,
         CustomTag,
         RuleCard,
         RuleEvidence,

@@ -11,6 +11,7 @@ from app.models.core import (  # noqa: E402
     BenchmarkAccount,
     BenchmarkAnalysis,
     BenchmarkPost,
+    ContentMechanism,
     ContentQualityReview,
     ContentDraft,
     CaptureRecord,
@@ -39,6 +40,7 @@ EXAMPLE_TO_MODEL = {
     "benchmark-analysis.json": BenchmarkAnalysis,
     "benchmark-post.json": BenchmarkPost,
     "content-inbox-item.json": ContentInboxItem,
+    "content-mechanism.json": ContentMechanism,
     "capture-record.json": CaptureRecord,
     "custom-tag.json": CustomTag,
     "rule-card.json": RuleCard,
@@ -124,10 +126,11 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(data["created_by"], "user")
 
     def test_collection_names_are_unique(self) -> None:
-        self.assertEqual(len(MODEL_TYPES), 18)
+        self.assertEqual(len(MODEL_TYPES), 19)
         self.assertEqual(MODEL_TYPES["creator-profiles"], CreatorProfile)
         self.assertEqual(MODEL_TYPES["benchmark-analyses"], BenchmarkAnalysis)
         self.assertEqual(MODEL_TYPES["content-inbox"], ContentInboxItem)
+        self.assertEqual(MODEL_TYPES["content-mechanisms"], ContentMechanism)
         self.assertEqual(MODEL_TYPES["content-quality-reviews"], ContentQualityReview)
         self.assertEqual(MODEL_TYPES["capture-records"], CaptureRecord)
         self.assertEqual(MODEL_TYPES["decision-requests"], DecisionRequest)

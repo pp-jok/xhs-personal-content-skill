@@ -1,0 +1,55 @@
+{
+  "id": "mechanism-result-first-tool-framing",
+  "name": "复杂工具结果化表达",
+  "description": "把复杂工具或工作流先翻译成用户能感知的内容运营结果，再说明实现过程。",
+  "status": "candidate",
+  "confidence_level": "low",
+  "source_refs": [
+    {
+      "source_type": "external_analysis",
+      "source_id": "external-analysis-example-001"
+    }
+  ],
+  "evidence_summary": {
+    "observed_facts": [
+      "标题先呈现可见结果，再出现工具或工作流名称"
+    ],
+    "inferences": [
+      "内容可能在用结果前置降低工具理解门槛"
+    ],
+    "user_stated_preferences": [],
+    "missing_information": [
+      "未获取评论区",
+      "未获取完整视频关键帧"
+    ],
+    "limitations": [
+      "不能确认用户真实评论需求",
+      "不能确认完整画面节奏"
+    ],
+    "source_coverage": {
+      "title": "present",
+      "body": "partial",
+      "cover": "present",
+      "comments": "missing",
+      "video_frames": "missing"
+    }
+  },
+  "problem": "复杂工具内容容易让用户只看到工具名，看不到和自己任务的关系。",
+  "solution": "先表达用户能获得的结果，再解释工具如何实现。",
+  "pattern": [
+    "结果前置",
+    "工具组合",
+    "流程证据"
+  ],
+  "applicable_scope": [
+    "AI工具内容",
+    "效率工具内容",
+    "工作流教程"
+  ],
+  "limitations": [
+    "不能夸大时间和效果",
+    "必须保留可见流程证据"
+  ],
+  "confidence": 0.4,
+  "created_by": "codex"
+}
