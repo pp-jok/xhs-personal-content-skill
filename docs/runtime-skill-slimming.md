@@ -33,6 +33,7 @@ The issue was not that the feature set was too large. The issue was that the alw
 
 - Shorter trigger description.
 - Concise user-facing response contract.
+- Explicit mode policy so many requests stay as light chat or lightweight analysis instead of entering persistence workflows.
 - Explicit minimal-read policy.
 - Five core flows instead of ten detailed workflow blocks.
 - No command catalog.
@@ -68,6 +69,7 @@ The following remain core behavior and should not be slimmed away:
 
 The agent should read only what the task requires:
 
+- Light chat and lightweight analysis do not read the workspace or write records by default.
 - Profile update: profile memory only.
 - Link/post intake: profile plus the specific inbox/capture/analysis records.
 - Rule decision: the specific candidate, evidence, analysis, and decisions.

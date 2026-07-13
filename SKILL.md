@@ -36,6 +36,16 @@ Hide paths, JSON names, schemas, CLI commands, stack traces, test output, and in
 
 Do not wait for perfect input. Save usable information first, mark uncertainty plainly, then ask at most 3 focused questions.
 
+## Mode Policy
+
+Classify the user's request before reading files or running commands.
+
+- Light chat: quick opinions, explanations, brainstorming, or "what is good about this?" Use only the current message and already-loaded context. Do not read the workspace, run capture, write records, or create rules.
+- Lightweight analysis: the user provides visible text, a screenshot, or a small excerpt and asks for a judgment. Give provisional observations and label uncertainty. Do not persist anything unless the user asks to save, tune, compare, or reuse it later.
+- Formal persistence: enter the full workflow only when the user asks to save, add to the material library, benchmark, analyze against their account, generate topics, generate a draft, confirm/reject a rule, create a publish task, review posted content, or run validation.
+
+If the request is ambiguous, default to lightweight analysis and offer one next action: "要沉淀到你的账号记忆里，我可以继续加入素材库。"
+
 ## Workspace
 
 Use the project-local workspace, not the global installed skill directory.
