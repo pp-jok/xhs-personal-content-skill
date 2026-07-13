@@ -43,6 +43,37 @@ python3 -m app.cli.main import-json creator-profiles data/examples/creator-profi
 python3 -m app.cli.main import-json creator-profiles data/examples/creator-profile.json --upsert
 ```
 
+## 导入候选内容机制
+
+PR-5A 增加 `import-mechanism`，用于把外部拆解、手工整理或不完整输入保存为候选内容机制。
+
+```bash
+python3 -m app.cli import-mechanism \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --file data/examples/content-mechanism.json
+```
+
+内容机制是软知识，不是 `RuleCard`，不会进入 `GenerationContext`，也不会影响 `generate-topics`、`generate-draft` 或 `revise-draft`。它只保存：
+
+- 可观察事实
+- Codex 或用户整理出的推断
+- 缺失信息
+- 限制和风险
+- 来源引用
+
+如果输入只有推断、喜好或空泛评价，没有任何可观察事实，命令会失败且不写入任何对象。成功时只写入 `ContentMechanism`，不会创建规则、规则证据、用户决策、选题、草稿、发布任务或内容资产。
+
+输入中的 `source_refs` 使用轻量来源引用，例如：
+
+```json
+[
+  {"source_type": "benchmark_analysis", "source_id": "analysis-001"},
+  {"source_type": "capture_record", "source_id": "capture-001"}
+]
+```
+
+`confidence_level` 使用 `low`、`medium`、`high`。保存时会同步为模型内的数值置信度；如果证据来源单一、缺失信息较多或没有来源绑定，高置信度会被降级。
+
 ## 列出记录
 
 ```bash

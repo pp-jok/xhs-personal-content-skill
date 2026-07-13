@@ -14,6 +14,7 @@ from app.models.core import (  # noqa: E402
     BenchmarkAnalysis,
     BenchmarkPost,
     CaptureRecord,
+    ContentMechanism,
     CreatorProfile,
     DecisionRequest,
     ProvenanceRecord,
@@ -105,6 +106,50 @@ class GenerationContextTests(unittest.TestCase):
         self.assertEqual(context.status_category, "ready")
         self.assertEqual(context.missing_information, [])
         self.assertEqual(context.usable_rules[0]["profile_alignment"], "matched")
+
+    def test_content_mechanism_records_do_not_enter_generation_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            profile = self._seed_profile(workspace, version=1)
+            rule = make_rule("rule-ready", "approved", "标题点名具体对象", rule_type="title")
+            JsonRepository(workspace, RuleCard).create(rule)
+            JsonRepository(workspace, RuleEvidence).create(make_evidence("evidence-ready", rule.id, "标题点名职场新人。"))
+            JsonRepository(workspace, ProvenanceRecord).create(
+                make_profile_provenance("provenance-ready", rule.id, profile.id, profile.version)
+            )
+            JsonRepository(workspace, DecisionRequest).create(make_confirmed_decision("decision-ready", rule.id))
+            JsonRepository(workspace, ContentMechanism).create(
+                ContentMechanism(
+                    id="mechanism-ignored",
+                    name="结果前置机制",
+                    description="先讲结果，再讲过程。",
+                    status="candidate",
+                    confidence_level="medium",
+                    confidence=0.6,
+                    source_refs=[{"source_type": "benchmark_analysis", "source_id": "analysis-001"}],
+                    evidence_summary={"observed_facts": ["封面先讲结果"]},
+                    problem="过程型内容门槛高。",
+                    solution="结果前置。",
+                    pattern=["结果前置"],
+                )
+            )
+            before = snapshot_workspace(workspace)
+
+            context = build_generation_context(
+                profile=profile,
+                rules=JsonRepository(workspace, RuleCard).list_all(),
+                evidence=JsonRepository(workspace, RuleEvidence).list_all(),
+                provenance=JsonRepository(workspace, ProvenanceRecord).list_all(),
+                decisions=JsonRepository(workspace, DecisionRequest).list_all(),
+                task_constraints=GenerationTaskConstraints(),
+            )
+
+            self.assertEqual(context.status_category, "ready")
+            self.assertEqual(context.machine_summary["usable_rule_ids"], ["rule-ready"])
+            serialized = json.dumps(context.to_dict(), ensure_ascii=False)
+            self.assertNotIn("mechanism-ignored", serialized)
+            self.assertNotIn("结果前置机制", serialized)
+            self.assertEqual(snapshot_workspace(workspace), before)
 
     def test_excludes_candidate_even_with_confirmed_looking_decision(self) -> None:
         profile = self._profile()

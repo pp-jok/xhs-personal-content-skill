@@ -27,6 +27,7 @@ from app.generation import (
     generate_topics_from_context,
     revise_draft_with_focus,
 )
+from app.mechanisms import import_mechanism_candidate
 from app.models.core import (
     MODEL_TYPES,
     Actor,
@@ -37,6 +38,7 @@ from app.models.core import (
     CaptureRecord,
     ContentDraft,
     ContentInboxItem,
+    ContentMechanism,
     ContentQualityReview,
     CreatorProfile,
     CustomTag,
@@ -123,6 +125,11 @@ def build_parser() -> argparse.ArgumentParser:
     import_parser.add_argument("--upsert", action="store_true", help="Overwrite existing record with the same id.")
     import_parser.set_defaults(handler=handle_import_json)
 
+    mechanism_parser = subparsers.add_parser("import-mechanism", help="Import one candidate content mechanism.")
+    mechanism_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    mechanism_parser.add_argument("--file", required=True, help="Content mechanism candidate JSON file.")
+    mechanism_parser.set_defaults(handler=handle_import_mechanism)
+
     list_parser = subparsers.add_parser("list", help="List records in a collection.")
     list_parser.add_argument("collection", choices=sorted(MODEL_TYPES), help="Collection name.")
     list_parser.set_defaults(handler=handle_list)
@@ -196,7 +203,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     user_context_parser = subparsers.add_parser("show-user-context", help="Show one object with user-facing context sections.")
     user_context_parser.add_argument("--workspace", required=True, help="Workspace directory.")
-    user_context_parser.add_argument("--collection", choices=sorted(MODEL_TYPES), required=True, help="Collection name.")
+    user_context_parser.add_argument(
+        "--collection",
+        choices=sorted(COLLECTION_TO_OBJECT_TYPE),
+        required=True,
+        help="Collection name.",
+    )
     user_context_parser.add_argument("--record-id", required=True, help="Record id.")
     user_context_parser.set_defaults(handler=handle_show_user_context)
 
@@ -426,6 +438,27 @@ def handle_import_json(args: argparse.Namespace) -> dict[str, Any]:
     else:
         saved = repo.upsert(model, changed_by="migration", change_note="import-json --upsert") if args.upsert else repo.create(model)
     return {"collection": args.collection, "id": saved.id}
+
+
+def handle_import_mechanism(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    ensure_workspace_dirs(workspace)
+    try:
+        data = read_json_object(Path(args.file), "content mechanism")
+    except Exception as exc:
+        raise ValueError("无法读取机制候选文件，请检查文件内容后重试。") from exc
+    result = import_mechanism_candidate(data)
+    if not result.created or result.mechanism is None:
+        raise ValueError(result.user_summary)
+    try:
+        saved = JsonRepository(workspace, ContentMechanism).create(result.mechanism)
+    except FileExistsError as exc:
+        raise ValueError("同名候选内容机制已存在，暂未重复保存。") from exc
+    output = result.to_output()
+    output["mechanism_id"] = saved.id
+    output["machine_summary"] = dict(result.machine_summary)
+    output["machine_summary"]["mechanism_id"] = saved.id
+    return output
 
 
 def handle_list(args: argparse.Namespace) -> list[dict[str, Any]]:

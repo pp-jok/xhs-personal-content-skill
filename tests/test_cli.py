@@ -20,6 +20,7 @@ from app.models.core import (  # noqa: E402
     CaptureRecord,
     ContentDraft,
     ContentInboxItem,
+    ContentMechanism,
     ContentQualityReview,
     CreatorProfile,
     CustomTag,
@@ -162,6 +163,127 @@ class CliTests(unittest.TestCase):
             self.assertTrue((Path(temp_dir) / "reports").exists())
             self.assertTrue((Path(temp_dir) / "creator-profiles").exists())
             self.assertIn("creator_profile.json", output["result"]["missing_required_files"])
+
+    def test_import_mechanism_success_writes_only_content_mechanism(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            source = workspace / "mechanism.json"
+            source.write_text(
+                json.dumps(
+                    {
+                        "id": "mechanism-cli-001",
+                        "name": "复杂工具结果化表达",
+                        "description": "把复杂工具能力先翻译成用户能感知的结果。",
+                        "source_refs": [
+                            {"source_type": "benchmark_analysis", "source_id": "analysis-001"},
+                            {"source_type": "capture_record", "source_id": "capture-001"},
+                        ],
+                        "evidence_summary": {
+                            "observed_facts": ["标题同时出现工具名和可见结果"],
+                            "inferences": ["内容把工具组合包装成运营结果"],
+                            "missing_information": [],
+                            "limitations": [],
+                            "source_coverage": {"title": "present", "body": "present"},
+                        },
+                        "problem": "复杂工具内容容易只剩工具名。",
+                        "solution": "先讲结果，再解释工具如何实现。",
+                        "pattern": ["工具组合", "结果承诺", "流程证据"],
+                        "applicable_scope": ["AI工具内容"],
+                        "limitations": ["不能夸大时间承诺"],
+                        "confidence_level": "medium",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            before = self._snapshot_workspace(workspace)
+
+            output = self._run_cli(["import-mechanism", "--workspace", temp_dir, "--file", str(source)])
+
+            self.assertTrue(output["ok"])
+            result = output["result"]
+            self.assertEqual(result["mechanism_id"], "mechanism-cli-001")
+            self.assertEqual(result["status_category"], "created")
+            self.assertEqual(result["mechanism_status"], "candidate")
+            self.assertEqual(result["confidence_level"], "medium")
+            self.assertIn("不会影响正式生成", result["user_summary"])
+            for forbidden in ("ContentMechanism", "candidate", "content-mechanisms", ".json", temp_dir):
+                self.assertNotIn(forbidden, result["user_summary"])
+
+            saved = JsonRepository(workspace, ContentMechanism).read("mechanism-cli-001")
+            self.assertEqual(saved.status, "candidate")
+            after = self._snapshot_workspace(workspace)
+            changed = sorted(set(after) - set(before))
+            self.assertEqual(changed, ["content-mechanisms/mechanism-cli-001.json"])
+            for model in (RuleCard, RuleEvidence, DecisionRequest, TopicItem, ContentDraft, PublishTask):
+                self.assertEqual(JsonRepository(workspace, model).list_all(), [])
+
+    def test_import_mechanism_failure_writes_nothing_and_hides_file_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            source = workspace / "bad-mechanism.json"
+            source.write_text(
+                json.dumps(
+                    {
+                        "id": "mechanism-cli-bad",
+                        "name": "复杂工具结果化表达",
+                        "description": "把复杂工具能力先翻译成用户能感知的结果。",
+                        "evidence_summary": {
+                            "observed_facts": [],
+                            "inferences": ["这个内容应该适合学习"],
+                            "user_stated_preferences": [],
+                        },
+                        "problem": "复杂工具内容容易只剩工具名。",
+                        "solution": "先讲结果，再解释工具如何实现。",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            before = self._snapshot_workspace(workspace)
+
+            output = self._run_cli(["import-mechanism", "--workspace", temp_dir, "--file", str(source)], expected_code=1)
+
+            self.assertFalse(output["ok"])
+            self.assertIn("至少一条可观察事实", output["error"])
+            for forbidden in ("ContentMechanism", "not_enough_evidence", ".json", temp_dir):
+                self.assertNotIn(forbidden, output["error"])
+            self.assertEqual(self._snapshot_workspace(workspace), before)
+            self.assertEqual(JsonRepository(workspace, ContentMechanism).list_all(), [])
+
+    def test_import_mechanism_limited_summary_keeps_missing_information(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "limited-mechanism.json"
+            source.write_text(
+                json.dumps(
+                    {
+                        "name": "封面结果前置",
+                        "description": "先让用户看到结果，再解释过程。",
+                        "source_refs": [],
+                        "evidence_summary": {
+                            "observed_facts": ["封面强调 10 分钟完成一个看得见的结果"],
+                            "missing_information": ["未获取评论区"],
+                            "limitations": ["不能确认用户真实需求"],
+                        },
+                        "problem": "过程型内容容易显得门槛高。",
+                        "solution": "",
+                        "pattern": [],
+                        "confidence_level": "high",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            output = self._run_cli(["import-mechanism", "--workspace", temp_dir, "--file", str(source)])
+
+            self.assertTrue(output["ok"])
+            result = output["result"]
+            self.assertEqual(result["status_category"], "limited_created")
+            self.assertEqual(result["confidence_level"], "low")
+            self.assertEqual(result["missing_information"], ["未获取评论区"])
+            self.assertIn("未获取评论区", result["user_summary"])
+            self.assertEqual(result["machine_summary"]["missing_information"], ["未获取评论区"])
 
     def test_upsert_profile_writes_single_file_and_collection_record(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

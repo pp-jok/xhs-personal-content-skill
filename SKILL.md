@@ -121,6 +121,16 @@ Do not infer long-term rules from words such as “长期” or “以后不要�
 
 When the user decides a candidate rule, present the rule, evidence, risk, recommendation, and both outcomes in ordinary language. Do not infer decision results from display text.
 
+### 3.5 Preserve Content Mechanisms
+
+Use a content mechanism only when the user asks to save an external teardown, partial analysis, or reusable content mechanism for later review.
+
+Content mechanisms are soft knowledge. They preserve observable facts, inferences, missing information, limitations, and source references. They are not rules, not content assets, and not generation constraints.
+
+Only save a candidate mechanism when there is at least one observable fact. If the input is only an inference, user opinion, or vague preference, say the information is insufficient and ask for one visible fact such as title text, cover text, body excerpt, transcript excerpt, or screenshot detail.
+
+Candidate mechanisms do not enter GenerationContext and must not affect topic generation, draft generation, focused revision, publishing tasks, or active rule selection. Converting a mechanism into a candidate rule or content asset is deferred to later explicit workflows.
+
 ### 4. Generate Topics, Drafts, And Focused Revisions
 
 Formal generation uses only active rules: `approved`, `testing`, and `validated`. Never use `candidate`, `rejected`, or `deprecated` rules in formal generation unless a future explicit experiment mode exists.
