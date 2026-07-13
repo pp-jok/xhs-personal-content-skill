@@ -453,6 +453,9 @@ class ContentMechanism(BaseModel):
                 ensure_list_items_are_text(self.evidence_summary[field_name], f"evidence_summary.{field_name}")
         if "source_coverage" in self.evidence_summary:
             require_dict(self.evidence_summary["source_coverage"], "evidence_summary.source_coverage")
+            for key, value in self.evidence_summary["source_coverage"].items():
+                require_text(key, "evidence_summary.source_coverage key")
+                require_text(value, "evidence_summary.source_coverage value")
         ensure_optional_text(self.problem, "problem")
         ensure_optional_text(self.solution, "solution")
         ensure_list_items_are_text(self.pattern, "pattern")

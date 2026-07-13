@@ -442,7 +442,6 @@ def handle_import_json(args: argparse.Namespace) -> dict[str, Any]:
 
 def handle_import_mechanism(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
-    ensure_workspace_dirs(workspace)
     try:
         data = read_json_object(Path(args.file), "content mechanism")
     except Exception as exc:
@@ -451,6 +450,7 @@ def handle_import_mechanism(args: argparse.Namespace) -> dict[str, Any]:
     if not result.created or result.mechanism is None:
         raise ValueError(result.user_summary)
     try:
+        ensure_workspace_dirs(workspace)
         saved = JsonRepository(workspace, ContentMechanism).create(result.mechanism)
     except FileExistsError as exc:
         raise ValueError("同名候选内容机制已存在，暂未重复保存。") from exc

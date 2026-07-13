@@ -78,6 +78,38 @@ class ContentMechanismModelTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ContentMechanism.from_dict({**valid_payload(), "evidence_summary": {}})
 
+    def test_content_mechanism_validates_source_coverage_strings(self) -> None:
+        mechanism = ContentMechanism.from_dict(
+            {
+                **valid_payload(),
+                "evidence_summary": {
+                    **valid_payload()["evidence_summary"],
+                    "source_coverage": {"title": "present", "comments": "missing", "video_frames": "partial"},
+                },
+            }
+        )
+        self.assertEqual(mechanism.evidence_summary["source_coverage"]["comments"], "missing")
+
+        invalid_cases = [
+            {"title": 1},
+            {"title": None},
+            {"": "present"},
+            {"title": ""},
+            {1: "present"},
+        ]
+        for source_coverage in invalid_cases:
+            with self.subTest(source_coverage=source_coverage):
+                with self.assertRaises(ValidationError):
+                    ContentMechanism.from_dict(
+                        {
+                            **valid_payload(),
+                            "evidence_summary": {
+                                **valid_payload()["evidence_summary"],
+                                "source_coverage": source_coverage,
+                            },
+                        }
+                    )
+
     def test_content_mechanism_rejects_invalid_source_ref_shape(self) -> None:
         with self.assertRaises(ValidationError):
             ContentMechanism.from_dict(
@@ -158,6 +190,56 @@ class ContentMechanismIntakeTests(unittest.TestCase):
         self.assertFalse(result.created)
         self.assertEqual(result.status_category, "not_enough_evidence")
         self.assertIsNone(result.mechanism)
+
+    def test_subjective_observed_facts_do_not_create_mechanism(self) -> None:
+        subjective_cases = [
+            (["很好"], {"problem": "用户难以理解复杂内容"}),
+            (["有价值"], {"solution": "先给出结果，再解释过程"}),
+            (
+                ["适合学习"],
+                {
+                    "problem": "用户难以理解复杂内容",
+                    "solution": "先给出结果，再解释过程",
+                    "pattern": ["结果前置"],
+                },
+            ),
+            (["很好", "有价值", "适合学习"], {"problem": "用户难以理解复杂内容"}),
+            (["不错"], {"problem": "用户难以理解复杂内容"}),
+            (["很棒"], {"problem": "用户难以理解复杂内容"}),
+            (["值得借鉴"], {"problem": "用户难以理解复杂内容"}),
+            (["效果很好"], {"problem": "用户难以理解复杂内容"}),
+            (["内容优质"], {"problem": "用户难以理解复杂内容"}),
+        ]
+        for facts, overrides in subjective_cases:
+            with self.subTest(facts=facts):
+                result = import_mechanism_candidate(
+                    valid_payload(
+                        id="mechanism-subjective",
+                        evidence_summary={"observed_facts": facts},
+                        **overrides,
+                    )
+                )
+                self.assertFalse(result.created)
+                self.assertEqual(result.status_category, "not_enough_evidence")
+
+    def test_short_factual_observed_facts_are_accepted(self) -> None:
+        accepted_facts = [
+            "标题含10min",
+            "标题的时间承诺与口播不一致",
+            "封面流程图很小，部分文字无法识别",
+            "视频时长94秒",
+            "未获取评论区",
+        ]
+        for fact in accepted_facts:
+            with self.subTest(fact=fact):
+                result = import_mechanism_candidate(
+                    valid_payload(
+                        id="mechanism-factual",
+                        evidence_summary={"observed_facts": [fact]},
+                    )
+                )
+                self.assertTrue(result.created)
+                self.assertIn(result.status_category, {"created", "limited_created"})
 
     def test_invalid_status_is_rejected_before_write(self) -> None:
         result = import_mechanism_candidate(valid_payload(status="active"))

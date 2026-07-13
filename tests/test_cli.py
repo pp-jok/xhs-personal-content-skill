@@ -251,6 +251,103 @@ class CliTests(unittest.TestCase):
             self.assertEqual(self._snapshot_workspace(workspace), before)
             self.assertEqual(JsonRepository(workspace, ContentMechanism).list_all(), [])
 
+    def test_import_mechanism_invalid_input_does_not_create_missing_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir) / "missing-workspace"
+            source = Path(temp_dir) / "bad-mechanism.json"
+            source.write_text(
+                json.dumps(
+                    {
+                        "id": "mechanism-cli-bad",
+                        "name": "复杂工具结果化表达",
+                        "description": "把复杂工具能力先翻译成用户能感知的结果。",
+                        "evidence_summary": {"observed_facts": ["很好"]},
+                        "problem": "用户难以理解复杂内容。",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            output = self._run_cli(["import-mechanism", "--workspace", str(workspace), "--file", str(source)], expected_code=1)
+
+            self.assertFalse(output["ok"])
+            self.assertIn("至少一条可观察事实", output["error"])
+            self.assertFalse(workspace.exists())
+
+    def test_import_mechanism_not_enough_evidence_does_not_create_missing_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir) / "missing-workspace"
+            source = Path(temp_dir) / "not-enough.json"
+            source.write_text(
+                json.dumps(
+                    {
+                        "id": "mechanism-cli-not-enough",
+                        "name": "复杂工具结果化表达",
+                        "description": "把复杂工具能力先翻译成用户能感知的结果。",
+                        "evidence_summary": {
+                            "observed_facts": [],
+                            "inferences": ["这个内容应该适合学习"],
+                        },
+                        "problem": "复杂工具内容容易只剩工具名。",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            output = self._run_cli(["import-mechanism", "--workspace", str(workspace), "--file", str(source)], expected_code=1)
+
+            self.assertFalse(output["ok"])
+            self.assertIn("至少一条可观察事实", output["error"])
+            self.assertFalse(workspace.exists())
+
+    def test_import_mechanism_bad_file_does_not_create_missing_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir) / "missing-workspace"
+            missing_file = Path(temp_dir) / "missing.json"
+            malformed_file = Path(temp_dir) / "malformed.json"
+            not_object_file = Path(temp_dir) / "list.json"
+            malformed_file.write_text("{", encoding="utf-8")
+            not_object_file.write_text("[]", encoding="utf-8")
+
+            for source in (missing_file, malformed_file, not_object_file):
+                with self.subTest(source=source.name):
+                    output = self._run_cli(
+                        ["import-mechanism", "--workspace", str(workspace), "--file", str(source)],
+                        expected_code=1,
+                    )
+                    self.assertFalse(output["ok"])
+                    self.assertFalse(workspace.exists())
+
+    def test_import_mechanism_duplicate_id_preserves_existing_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            source = workspace / "mechanism.json"
+            payload = {
+                "id": "mechanism-cli-duplicate",
+                "name": "复杂工具结果化表达",
+                "description": "把复杂工具能力先翻译成用户能感知的结果。",
+                "source_refs": [
+                    {"source_type": "benchmark_analysis", "source_id": "analysis-001"},
+                    {"source_type": "capture_record", "source_id": "capture-001"},
+                ],
+                "evidence_summary": {"observed_facts": ["标题包含10min"]},
+                "problem": "复杂工具内容容易只剩工具名。",
+                "solution": "先讲结果，再解释工具如何实现。",
+                "pattern": ["结果承诺"],
+            }
+            source.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            first = self._run_cli(["import-mechanism", "--workspace", str(workspace), "--file", str(source)])
+            before = self._snapshot_workspace(workspace)
+
+            second = self._run_cli(["import-mechanism", "--workspace", str(workspace), "--file", str(source)], expected_code=1)
+
+            self.assertTrue(first["ok"])
+            self.assertFalse(second["ok"])
+            self.assertIn("同名候选内容机制已存在", second["error"])
+            self.assertEqual(self._snapshot_workspace(workspace), before)
+
     def test_import_mechanism_limited_summary_keeps_missing_information(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "limited-mechanism.json"

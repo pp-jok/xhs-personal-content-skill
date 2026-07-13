@@ -23,7 +23,41 @@ EVIDENCE_LIST_FIELDS = (
 )
 ALLOWED_SOURCE_TYPES = set(get_args(ContentMechanismSourceType))
 ALLOWED_CONFIDENCE_LEVELS = set(CONTENT_MECHANISM_CONFIDENCE_SCORES)
-GENERIC_FACTS = {"很好", "不错", "适合学", "值得学", "有用", "这个标题挺好"}
+GENERIC_SUBJECTIVE_FACTS = {
+    "很好",
+    "有价值",
+    "适合学习",
+    "不错",
+    "很棒",
+    "值得借鉴",
+    "效果很好",
+    "内容优质",
+    "适合学",
+    "值得学",
+    "有用",
+    "这个标题挺好",
+}
+FACT_NORMALIZATION_TABLE = str.maketrans(
+    {
+        "。": "",
+        "，": "",
+        ",": "",
+        ".": "",
+        "！": "",
+        "!": "",
+        "？": "",
+        "?": "",
+        "；": "",
+        ";": "",
+        "：": "",
+        ":": "",
+        "“": "",
+        "”": "",
+        "\"": "",
+        "'": "",
+        " ": "",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -64,8 +98,8 @@ def import_mechanism_candidate(payload: dict[str, Any]) -> MechanismIntakeResult
     observed_facts = normalized["evidence_summary"]["observed_facts"]
     if not observed_facts:
         return no_evidence_result()
-    if is_hollow_input(normalized):
-        return invalid_result("输入内容太空，暂未保存。请至少补充这个机制解决的问题或解决方式。")
+    if all_observed_facts_are_generic_subjective(observed_facts):
+        return no_evidence_result()
 
     status_category = classify_status(normalized)
     confidence_level = choose_confidence_level(normalized, status_category)
@@ -143,11 +177,18 @@ def normalize_evidence_summary(value: Any) -> dict[str, Any]:
         source_coverage = {}
     if not isinstance(source_coverage, dict):
         raise ValueError("source_coverage 必须是对象。")
-    normalized["source_coverage"] = {
-        normalize_text(key): normalize_text(item)
-        for key, item in source_coverage.items()
-        if normalize_text(key) and normalize_text(item)
-    }
+    normalized["source_coverage"] = normalize_source_coverage(source_coverage)
+    return normalized
+
+
+def normalize_source_coverage(value: dict[Any, Any]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("source_coverage 的字段名必须是非空文本。")
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("source_coverage 的字段值必须是非空文本。")
+        normalized[key.strip()] = item.strip()
     return normalized
 
 
@@ -199,10 +240,12 @@ def build_mechanism_id(name: str, observed_facts: list[str]) -> str:
     return "mechanism-" + sha1(seed.encode("utf-8")).hexdigest()[:12]
 
 
-def is_hollow_input(normalized: dict[str, Any]) -> bool:
-    facts = normalized["evidence_summary"]["observed_facts"]
-    has_meaningful_fact = any(item not in GENERIC_FACTS for item in facts)
-    return not has_meaningful_fact and not normalized["problem"] and not normalized["solution"]
+def all_observed_facts_are_generic_subjective(observed_facts: list[str]) -> bool:
+    return all(normalize_fact_for_subjective_check(item) in GENERIC_SUBJECTIVE_FACTS for item in observed_facts)
+
+
+def normalize_fact_for_subjective_check(value: str) -> str:
+    return value.strip().translate(FACT_NORMALIZATION_TABLE)
 
 
 def classify_status(normalized: dict[str, Any]) -> MechanismIntakeStatus:

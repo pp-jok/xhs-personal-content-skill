@@ -535,7 +535,7 @@ python3 -m app.cli import-mechanism \
 9. import-mechanism 成功时只写 ContentMechanism。
 10. import-mechanism 失败路径不写任何对象。
 11. 不生成 RuleCard / TopicItem / ContentDraft / PublishTask。
-12. deprecated status 可以导入，但未来 PR-5B 不得用于生成 RuleCard。
+12. ContentMechanism 模型支持 candidate / active / deprecated，但 PR-5A 的 import-mechanism 只允许创建 candidate；输入 active 或 deprecated 时返回 invalid_input。active / deprecated 只能通过未来单独的生命周期治理能力产生。
 13. user_summary 不暴露本地路径、内部 enum、JSON 细节。
 14. machine_summary 保留 mechanism_id、status_category、mechanism_status、confidence_level、confidence、source_refs。
 ```
