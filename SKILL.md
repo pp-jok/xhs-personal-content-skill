@@ -141,6 +141,16 @@ When the user explicitly asks to turn a saved mechanism into an account rule, us
 
 Never use mechanism inferences, user preferences, missing information, or account-fit wording as rule evidence. Never turn a deprecated mechanism into a rule. Never imply a mechanism-derived candidate rule affects generation before user confirmation.
 
+When the user explicitly asks to turn a saved mechanism into a reusable content asset, use the controlled mechanism-to-asset flow:
+
+1. Read only the selected `ContentMechanism`, selected `CreatorProfile`, existing content assets, and provenance needed for duplicate checks.
+2. Use a structured asset proposal prepared from the user's/Codex's current reasoning.
+3. Create only a candidate content asset, content asset evidence from selected observed facts, and provenance.
+4. Do not create a decision automatically.
+5. Tell the user the asset is not active, not connected to generation, and there is currently no asset activation command in this stage.
+
+Content assets are reusable structured text components, not media files, not full finished posts, and not rules. Never use mechanism inferences, preferences, missing information, usage notes, examples, or account-fit wording as asset evidence. Never turn a deprecated mechanism into an asset. Never imply a mechanism-derived content asset affects topic generation or draft generation before a future explicit reference flow exists.
+
 ### 4. Generate Topics, Drafts, And Focused Revisions
 
 Formal generation uses only active rules: `approved`, `testing`, and `validated`. Never use `candidate`, `rejected`, or `deprecated` rules in formal generation unless a future explicit experiment mode exists.

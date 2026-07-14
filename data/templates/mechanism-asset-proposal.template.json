@@ -1,0 +1,32 @@
+{
+  "asset_type": "opening_template",
+  "name": "任务结果优先开场",
+  "description": "用于先呈现用户可完成的内容运营结果，再解释工具和过程。",
+  "template": "先说明你可以完成的结果：{{result}}。\n再说明实现过程：{{process}}。",
+  "variables": [
+    "result",
+    "process"
+  ],
+  "applicable_scope": [
+    "AI 内容运营",
+    "工作流介绍"
+  ],
+  "exclusions": [
+    "纯工具安装教程"
+  ],
+  "usage_notes": [
+    "先填写具体、可验证的结果，再填写支撑这个结果的过程证据。"
+  ],
+  "limitations": [
+    "结果描述必须可验证",
+    "不能夸大时间和收益"
+  ],
+  "examples": [
+    "先说明可以整理一套选题库，再说明用了哪些步骤和工具。"
+  ],
+  "selected_observed_facts": [
+    "标题先展示结果承诺，再说明使用的工具和流程"
+  ],
+  "account_fit_reason": "提案认为这适合当前账号的 AI 内容运营判断定位。",
+  "confidence_level": "medium"
+}

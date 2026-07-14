@@ -115,6 +115,63 @@ python3 -m app.cli propose-rule-from-mechanism \
 
 近义重复和语义冲突仍需人工判断；本地服务不调用模型、不做 embeddings、不做中文分词。
 
+## 从内容机制提出候选内容资产
+
+PR-5C 增加 `propose-asset-from-mechanism`，用于把一个已保存的内容机制、一个明确选择的账号档案，以及外部/Codex 整理出的结构化资产提案，转成待确认的结构化文本内容资产。
+
+```bash
+python3 -m app.cli propose-asset-from-mechanism \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --mechanism-id mechanism-result-framing \
+  --creator-id creator-main \
+  --file data/templates/mechanism-asset-proposal.template.json
+```
+
+内容资产是可复用的结构化文本组件，不是 `RuleCard`，也不是生成硬约束。第一版只支持文本结构资产：
+
+- 标题公式
+- 封面结构
+- 开头模板
+- 正文结构
+- 行动引导模板
+- 对比表达框架
+- 案例讲述框架
+- 图文页结构
+- 选题框架
+
+结构化提案必须是一个 JSON object，必须包含：
+
+- `asset_type`
+- `name`
+- `description`
+- `template`
+- `variables`
+- `applicable_scope`
+- `selected_observed_facts`
+- `account_fit_reason`
+- `limitations`
+
+可选字段：
+
+- `exclusions`
+- `usage_notes`
+- `examples`
+- `confidence_level`
+
+`template` 允许 Markdown，占位符只支持 `{{variable_name}}`。每个占位符必须在 `variables` 中声明，声明的变量也必须在模板中出现。变量名只支持英文字母、数字和下划线，并且不能以数字开头。
+
+该命令只创建：
+
+- 1 个 `candidate` 候选内容资产
+- 1-3 条内容资产证据
+- 内容机制和账号档案到候选内容资产的来源记录
+
+它不会创建用户决策，不会自动激活资产，不会修改内容机制或账号档案，不会创建规则、选题、草稿、发布任务或媒体素材。创建成功后，资产仍未进入内容生成；当前也没有资产激活命令或资产决策命令。PR-5D 才会处理显式引用和受控接入。
+
+证据只能来自机制中的 `observed_facts`。不能把推断、用户偏好、缺失信息、限制、使用说明或账号适配理由当作资产证据。`candidate` 和 `active` 机制都可以作为来源，但 `deprecated` 机制会被拒绝。
+
+第一版不支持图片、视频、音频、二进制附件、远程 URL 资产、外部抓取、OCR、视频解析、媒体生成、完整文章成稿、固定发布文案或批量资产导入。近义模板、语义相似和冲突仍需人工判断；本地服务不调用模型、不做 embeddings、不做中文分词。
+
 ## 列出记录
 
 ```bash

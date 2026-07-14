@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from datetime import datetime
+import re
 from typing import Any, ClassVar, Literal, TypeVar, get_args
 
 
@@ -30,6 +31,19 @@ RuleEvidenceSourceType = Literal[
     "own_post",
     "review_record",
 ]
+ContentAssetStatus = Literal["candidate", "active", "deprecated"]
+ContentAssetType = Literal[
+    "title_pattern",
+    "cover_structure",
+    "opening_template",
+    "body_structure",
+    "cta_template",
+    "comparison_framework",
+    "case_framework",
+    "image_text_structure",
+    "topic_framework",
+]
+ContentAssetEvidenceSourceType = Literal["content_mechanism"]
 ContentMechanismStatus = Literal["candidate", "active", "deprecated"]
 ContentMechanismConfidenceLevel = Literal["low", "medium", "high"]
 ContentMechanismSourceType = Literal[
@@ -64,6 +78,7 @@ ObjectType = Literal[
     "capture_record",
     "benchmark_analysis",
     "content_mechanism",
+    "content_asset",
     "custom_tag",
     "rule_card",
     "rule_evidence",
@@ -142,6 +157,60 @@ CONTENT_MECHANISM_CONFIDENCE_SCORES: dict[ContentMechanismConfidenceLevel, float
     "medium": 0.6,
     "high": 0.8,
 }
+GENERIC_HOLLOW_TEXT = {"很好", "有价值", "推荐", "通用模板", "通用内容", "适合账号", "值得使用", "值得借鉴"}
+VARIABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+PLACEHOLDER_RE = re.compile(r"{{([^{}]*)}}")
+
+
+def ensure_unique_texts(value: list[Any], field_name: str) -> None:
+    ensure_list_items_are_text(value, field_name)
+    cleaned = [item.strip() for item in value]
+    if len(cleaned) != len(set(cleaned)):
+        raise ValidationError(f"{field_name} must not contain duplicates")
+
+
+def ensure_non_empty_unique_texts(value: list[Any], field_name: str, require_one: bool = False) -> None:
+    ensure_unique_texts(value, field_name)
+    if require_one and not value:
+        raise ValidationError(f"{field_name} must contain at least one item")
+
+
+def ensure_variable_names(value: list[str]) -> None:
+    for item in value:
+        if not VARIABLE_NAME_RE.match(item):
+            raise ValidationError("variables must use names like result or process_step")
+
+
+def reject_hollow_text(value: str, field_name: str) -> None:
+    if value.strip() in GENERIC_HOLLOW_TEXT:
+        raise ValidationError(f"{field_name} is too generic")
+
+
+def validate_template_contract(template: str, variables: list[str]) -> None:
+    require_text(template, "template")
+    reject_hollow_text(template, "template")
+    ensure_unique_texts(variables, "variables")
+    ensure_variable_names(variables)
+    if re.search(r"{{\s*}}", template):
+        raise ValidationError("template placeholders cannot be empty")
+    if template.count("{{") != template.count("}}"):
+        raise ValidationError("template contains an unclosed placeholder")
+    if "{{" in re.sub(PLACEHOLDER_RE, "", template) or "}}" in re.sub(PLACEHOLDER_RE, "", template):
+        raise ValidationError("template contains invalid nested placeholders")
+    placeholders = [item.strip() for item in PLACEHOLDER_RE.findall(template)]
+    if not placeholders:
+        raise ValidationError("template must contain at least one declared placeholder")
+    if any(not VARIABLE_NAME_RE.match(item) for item in placeholders):
+        raise ValidationError("template placeholders must use valid variable names")
+    fixed_text = PLACEHOLDER_RE.sub("", template).strip()
+    if not fixed_text:
+        raise ValidationError("template must contain fixed structure text")
+    declared = set(variables)
+    used = set(placeholders)
+    if not used <= declared:
+        raise ValidationError("template contains undeclared placeholders")
+    if declared != used:
+        raise ValidationError("variables must all be used in template")
 
 
 @dataclass
@@ -469,6 +538,103 @@ class ContentMechanism(BaseModel):
         ensure_list_items_are_text(self.pattern, "pattern")
         ensure_list_items_are_text(self.applicable_scope, "applicable_scope")
         ensure_list_items_are_text(self.limitations, "limitations")
+
+
+@dataclass
+class ContentAsset(BaseModel):
+    collection_name: ClassVar[str] = "content-assets"
+
+    confidence: float = 0.4
+    status: ContentAssetStatus = "candidate"
+    asset_type: ContentAssetType = "opening_template"
+    name: str = ""
+    description: str = ""
+    template: str = ""
+    variables: list[str] = field(default_factory=list)
+    applicable_scope: list[str] = field(default_factory=list)
+    exclusions: list[str] = field(default_factory=list)
+    usage_notes: list[str] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+    examples: list[str] = field(default_factory=list)
+    creator_profile_id: str = ""
+    source_mechanism_ids: list[str] = field(default_factory=list)
+    selected_observed_facts: list[str] = field(default_factory=list)
+    account_fit_reason: str = ""
+    confidence_level: ContentMechanismConfidenceLevel = "low"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ContentAsset":
+        require_dict(data, cls.__name__)
+        normalized = dict(data)
+        confidence_level = normalized.get("confidence_level", "low")
+        if "confidence" not in normalized and confidence_level in CONTENT_MECHANISM_CONFIDENCE_SCORES:
+            normalized["confidence"] = CONTENT_MECHANISM_CONFIDENCE_SCORES[confidence_level]
+        return super().from_dict(normalized)
+
+    def validate(self) -> None:
+        require_literal(self.status, ContentAssetStatus, "status")
+        require_literal(self.asset_type, ContentAssetType, "asset_type")
+        require_text(self.name, "name")
+        reject_hollow_text(self.name, "name")
+        require_text(self.description, "description")
+        reject_hollow_text(self.description, "description")
+        validate_template_contract(self.template, self.variables)
+        ensure_unique_texts(self.variables, "variables")
+        ensure_variable_names(self.variables)
+        ensure_non_empty_unique_texts(self.applicable_scope, "applicable_scope", require_one=True)
+        ensure_non_empty_unique_texts(self.exclusions, "exclusions")
+        ensure_non_empty_unique_texts(self.usage_notes, "usage_notes")
+        ensure_non_empty_unique_texts(self.limitations, "limitations")
+        ensure_non_empty_unique_texts(self.examples, "examples")
+        require_text(self.creator_profile_id, "creator_profile_id")
+        ensure_non_empty_unique_texts(self.source_mechanism_ids, "source_mechanism_ids", require_one=True)
+        if len(self.source_mechanism_ids) != 1:
+            raise ValidationError("source_mechanism_ids must contain exactly one mechanism id")
+        ensure_non_empty_unique_texts(self.selected_observed_facts, "selected_observed_facts", require_one=True)
+        if len(self.selected_observed_facts) > 3:
+            raise ValidationError("selected_observed_facts can contain at most 3 items")
+        require_text(self.account_fit_reason, "account_fit_reason")
+        require_literal(self.confidence_level, ContentMechanismConfidenceLevel, "confidence_level")
+        expected_confidence = CONTENT_MECHANISM_CONFIDENCE_SCORES[self.confidence_level]
+        if float(self.confidence) != expected_confidence:
+            raise ValidationError("confidence must match confidence_level")
+
+
+@dataclass
+class ContentAssetEvidence(BaseModel):
+    collection_name: ClassVar[str] = "content-asset-evidence"
+
+    confidence: float = 0.4
+    asset_id: str = ""
+    source_type: ContentAssetEvidenceSourceType = "content_mechanism"
+    source_id: str = ""
+    source_version: int = 1
+    source_fragment: str = ""
+    evidence_text: str = ""
+    confidence_level: ContentMechanismConfidenceLevel = "low"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ContentAssetEvidence":
+        require_dict(data, cls.__name__)
+        normalized = dict(data)
+        confidence_level = normalized.get("confidence_level", "low")
+        if "confidence" not in normalized and confidence_level in CONTENT_MECHANISM_CONFIDENCE_SCORES:
+            normalized["confidence"] = CONTENT_MECHANISM_CONFIDENCE_SCORES[confidence_level]
+        return super().from_dict(normalized)
+
+    def validate(self) -> None:
+        require_text(self.asset_id, "asset_id")
+        require_literal(self.source_type, ContentAssetEvidenceSourceType, "source_type")
+        require_text(self.source_id, "source_id")
+        ensure_non_negative_int(self.source_version, "source_version")
+        if self.source_version < 1:
+            raise ValidationError("source_version must be at least 1")
+        require_text(self.source_fragment, "source_fragment")
+        require_text(self.evidence_text, "evidence_text")
+        require_literal(self.confidence_level, ContentMechanismConfidenceLevel, "confidence_level")
+        expected_confidence = CONTENT_MECHANISM_CONFIDENCE_SCORES[self.confidence_level]
+        if float(self.confidence) != expected_confidence:
+            raise ValidationError("confidence must match confidence_level")
 
 
 @dataclass
@@ -896,6 +1062,8 @@ MODEL_TYPES: dict[str, type[BaseModel]] = {
         CaptureRecord,
         BenchmarkAnalysis,
         ContentMechanism,
+        ContentAsset,
+        ContentAssetEvidence,
         CustomTag,
         RuleCard,
         RuleEvidence,

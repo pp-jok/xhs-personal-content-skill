@@ -1,6 +1,8 @@
 from app.models.core import (
     BenchmarkAccount,
     BenchmarkPost,
+    ContentAsset,
+    ContentAssetEvidence,
     ContentDraft,
     ContentMechanism,
     CreatorProfile,
@@ -18,6 +20,8 @@ from app.models.core import (
 __all__ = [
     "BenchmarkAccount",
     "BenchmarkPost",
+    "ContentAsset",
+    "ContentAssetEvidence",
     "ContentDraft",
     "ContentMechanism",
     "CreatorProfile",

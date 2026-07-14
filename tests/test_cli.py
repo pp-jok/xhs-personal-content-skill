@@ -18,6 +18,8 @@ from app.models.core import (  # noqa: E402
     BenchmarkAnalysis,
     BenchmarkPost,
     CaptureRecord,
+    ContentAsset,
+    ContentAssetEvidence,
     ContentDraft,
     ContentInboxItem,
     ContentMechanism,
@@ -2997,6 +2999,240 @@ class CliTests(unittest.TestCase):
             self.assertIn("无法读取结构化机制规则提案", output["error"])
             self.assertNotIn(str(proposal_file), output["error"])
             self.assertFalse(workspace.exists())
+
+    def test_propose_asset_from_mechanism_creates_candidate_asset_without_generation_side_effects(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            mechanism = ContentMechanism(
+                id="mechanism-cli-asset",
+                name="结果前置表达机制",
+                description="先呈现用户可获得的内容运营结果，再解释工具和过程。",
+                status="candidate",
+                confidence_level="medium",
+                confidence=0.6,
+                source_refs=[{"source_type": "external_analysis", "source_id": "external-001"}],
+                evidence_summary={
+                    "observed_facts": [
+                        "标题先展示结果承诺，再说明使用的工具和流程",
+                        "正文先写用户能完成的内容运营任务",
+                    ],
+                    "inferences": ["内容把复杂工具包装成结果"],
+                    "missing_information": ["未获取评论区"],
+                    "limitations": ["不能确认长期表现"],
+                },
+                problem="复杂工具内容容易只剩工具名。",
+                solution="先讲结果，再解释工具。",
+                applicable_scope=["AI 内容运营"],
+                limitations=["不能夸大时间承诺"],
+            )
+            profile = CreatorProfile(
+                id="creator-mechanism-asset",
+                name="主账号",
+                positioning="帮助创作者用 AI 做内容运营判断。",
+                target_audience=["内容创作者"],
+                content_style=["真实", "克制"],
+                forbidden_expressions=[],
+                goals=["提升内容运营效率"],
+                content_formats=["图文"],
+                publish_frequency="每周 3 次",
+                notes="测试账号。",
+            )
+            JsonRepository(workspace, ContentMechanism).create(mechanism)
+            JsonRepository(workspace, CreatorProfile).create(profile)
+            proposal_file = workspace / "mechanism-asset.json"
+            proposal_file.write_text(
+                json.dumps(
+                    {
+                        "asset_type": "opening_template",
+                        "name": "任务结果优先开场",
+                        "description": "用于先呈现用户可完成的内容运营结果，再解释工具和过程。",
+                        "template": "先说明你可以完成的结果：{{result}}。\n再说明实现过程：{{process}}。",
+                        "variables": ["result", "process"],
+                        "applicable_scope": ["AI 内容运营", "工作流介绍"],
+                        "exclusions": ["纯工具安装教程"],
+                        "usage_notes": ["先填具体结果，再填过程证据。"],
+                        "limitations": ["结果描述必须可验证"],
+                        "examples": ["先说明完成选题库，再说明工具流程。"],
+                        "selected_observed_facts": ["标题先展示结果承诺，再说明使用的工具和流程"],
+                        "account_fit_reason": "提案认为这适合当前账号的 AI 内容运营判断定位。",
+                        "confidence_level": "medium",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            before = self._snapshot_workspace(workspace)
+
+            output = self._run_cli(
+                [
+                    "propose-asset-from-mechanism",
+                    "--workspace",
+                    temp_dir,
+                    "--mechanism-id",
+                    mechanism.id,
+                    "--creator-id",
+                    profile.id,
+                    "--file",
+                    str(proposal_file),
+                ]
+            )
+
+            self.assertTrue(output["ok"])
+            result = output["result"]
+            self.assertEqual(result["created_count"], 1)
+            self.assertFalse(result["machine_summary"]["generation_context_connected"])
+            self.assertFalse(result["machine_summary"]["decision_request_created"])
+            self.assertIn("候选内容资产", result["user_summary"])
+            self.assertIn("尚未进入内容生成", result["user_summary"])
+            for forbidden in ("ContentAsset", "content-assets", "candidate", ".json", temp_dir, mechanism.id):
+                self.assertNotIn(forbidden, result["user_summary"])
+            assets = JsonRepository(workspace, ContentAsset).list_all()
+            self.assertEqual(len(assets), 1)
+            self.assertEqual(assets[0].status, "candidate")
+            self.assertEqual(len(JsonRepository(workspace, ContentAssetEvidence).list_all()), 1)
+            self.assertEqual(len(JsonRepository(workspace, ProvenanceRecord).list_all()), 2)
+            self.assertEqual(JsonRepository(workspace, DecisionRequest).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, RuleCard).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, RuleEvidence).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, TopicItem).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, ContentDraft).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, PublishTask).list_all(), [])
+            after = self._snapshot_workspace(workspace)
+            changed = sorted(set(after) - set(before))
+            self.assertEqual(
+                changed,
+                sorted(
+                    [
+                        f"content-assets/{assets[0].id}.json",
+                        f"content-asset-evidence/{result['machine_summary']['evidence_ids'][0]}.json",
+                        f"provenance-records/{result['machine_summary']['provenance_ids'][0]}.json",
+                        f"provenance-records/{result['machine_summary']['provenance_ids'][1]}.json",
+                    ]
+                ),
+            )
+
+    def test_propose_asset_from_mechanism_failures_write_nothing_and_hide_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir) / "missing-workspace"
+            proposal_file = Path(temp_dir) / "bad-mechanism-asset.json"
+            proposal_file.write_text("{bad json", encoding="utf-8")
+
+            output = self._run_cli(
+                [
+                    "propose-asset-from-mechanism",
+                    "--workspace",
+                    str(workspace),
+                    "--mechanism-id",
+                    "mechanism-missing",
+                    "--creator-id",
+                    "creator-missing",
+                    "--file",
+                    str(proposal_file),
+                ],
+                expected_code=1,
+            )
+
+            self.assertFalse(output["ok"])
+            self.assertIn("无法读取结构化机制资产提案", output["error"])
+            self.assertNotIn(str(proposal_file), output["error"])
+            self.assertFalse(workspace.exists())
+
+    def test_propose_asset_from_mechanism_missing_records_and_duplicates_write_no_business_objects(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            proposal = {
+                "asset_type": "opening_template",
+                "name": "任务结果优先开场",
+                "description": "用于先呈现用户可完成的内容运营结果，再解释工具和过程。",
+                "template": "结果：{{result}}\n过程：{{process}}",
+                "variables": ["result", "process"],
+                "applicable_scope": ["AI 内容运营"],
+                "selected_observed_facts": ["标题先展示结果承诺，再说明使用的工具和流程"],
+                "account_fit_reason": "提案认为这适合当前账号定位。",
+                "limitations": [],
+            }
+            proposal_file = workspace / "mechanism-asset.json"
+            proposal_file.write_text(json.dumps(proposal, ensure_ascii=False), encoding="utf-8")
+            before = self._snapshot_workspace(workspace)
+
+            missing = self._run_cli(
+                [
+                    "propose-asset-from-mechanism",
+                    "--workspace",
+                    temp_dir,
+                    "--mechanism-id",
+                    "mechanism-missing",
+                    "--creator-id",
+                    "creator-missing",
+                    "--file",
+                    str(proposal_file),
+                ],
+                expected_code=1,
+            )
+
+            self.assertIn("未找到指定内容机制或账号档案", missing["error"])
+            self.assertEqual(set(self._snapshot_workspace(workspace)) - set(before), set())
+
+            mechanism = ContentMechanism(
+                id="mechanism-cli-asset-duplicate",
+                name="结果前置表达机制",
+                description="先呈现用户可获得的内容运营结果，再解释工具和过程。",
+                status="candidate",
+                confidence_level="medium",
+                confidence=0.6,
+                evidence_summary={"observed_facts": ["标题先展示结果承诺，再说明使用的工具和流程"]},
+                problem="复杂工具内容容易只剩工具名。",
+                solution="先讲结果，再解释工具。",
+                applicable_scope=["AI 内容运营"],
+                limitations=[],
+            )
+            profile = CreatorProfile(
+                id="creator-cli-asset-duplicate",
+                name="主账号",
+                positioning="帮助创作者用 AI 做内容运营判断。",
+                target_audience=["内容创作者"],
+                content_style=["真实"],
+                forbidden_expressions=[],
+                goals=["提升内容运营效率"],
+                content_formats=["图文"],
+                publish_frequency="每周 3 次",
+                notes="测试。",
+            )
+            JsonRepository(workspace, ContentMechanism).create(mechanism)
+            JsonRepository(workspace, CreatorProfile).create(profile)
+            first = self._run_cli(
+                [
+                    "propose-asset-from-mechanism",
+                    "--workspace",
+                    temp_dir,
+                    "--mechanism-id",
+                    mechanism.id,
+                    "--creator-id",
+                    profile.id,
+                    "--file",
+                    str(proposal_file),
+                ]
+            )
+            after_first = self._snapshot_workspace(workspace)
+
+            duplicate = self._run_cli(
+                [
+                    "propose-asset-from-mechanism",
+                    "--workspace",
+                    temp_dir,
+                    "--mechanism-id",
+                    mechanism.id,
+                    "--creator-id",
+                    profile.id,
+                    "--file",
+                    str(proposal_file),
+                ],
+                expected_code=1,
+            )
+
+            self.assertEqual(first["result"]["created_count"], 1)
+            self.assertIn("已有相同", duplicate["error"])
+            self.assertEqual(self._snapshot_workspace(workspace), after_first)
 
     def test_propose_rule_from_mechanism_missing_records_write_no_business_objects(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
