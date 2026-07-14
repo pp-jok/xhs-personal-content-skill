@@ -183,6 +183,15 @@ class ContentAssetModelTests(unittest.TestCase):
             with self.subTest(asset_type=asset_type):
                 self.assertEqual(ContentAsset.from_dict({**base, "asset_type": asset_type}).asset_type, asset_type)
 
+        repeated_variable_asset = ContentAsset.from_dict(
+            {
+                **base,
+                "template": "## 开场\n先说 {{result}}，再解释 {{process}}，最后重复 {{result}}。",
+                "variables": ["result", "process"],
+            }
+        )
+        self.assertEqual(repeated_variable_asset.variables, ["result", "process"])
+
         invalid_cases = [
             {"status": "draft"},
             {"asset_type": "generic"},
@@ -190,9 +199,23 @@ class ContentAssetModelTests(unittest.TestCase):
             {"template": "{{result}}", "variables": ["result"]},
             {"template": "结果：{{missing}}", "variables": ["result"]},
             {"template": "结果：{{result}}", "variables": ["result", "unused"]},
+            {"template": "结果：{{ result }}", "variables": ["result"]},
+            {"template": "结果：{{result }}", "variables": ["result"]},
+            {"template": "结果：{{ result}}", "variables": ["result"]},
             {"template": "结果：{{}}", "variables": ["result"]},
+            {"template": "结果：{{   }}", "variables": ["result"]},
+            {"template": "结果：{{{result}}}", "variables": ["result"]},
+            {"template": "结果：{{result}}}", "variables": ["result"]},
+            {"template": "结果：{{{result}}", "variables": ["result"]},
             {"template": "结果：{{result", "variables": ["result"]},
+            {"template": "结果：result}}", "variables": ["result"]},
             {"template": "结果：{{outer{{inner}}}}", "variables": ["outer"]},
+            {"template": "结果：{{result|default}}", "variables": ["result"]},
+            {"template": "结果：{{user.name}}", "variables": ["user"]},
+            {"template": "结果：{{items[0]}}", "variables": ["items"]},
+            {"template": "结果：{{result()}}", "variables": ["result"]},
+            {"template": "结果：{{result-name}}", "variables": ["result"]},
+            {"template": "结果：{{1result}}", "variables": ["result"]},
             {"variables": ["result", "result"]},
             {"variables": ["结果"]},
             {"applicable_scope": []},
@@ -281,6 +304,9 @@ class MechanismAssetProposalTests(unittest.TestCase):
             {"description": "很好"},
             {"template": ""},
             {"template": "{{result}}", "variables": ["result"]},
+            {"template": "结果：{{ result }}", "variables": ["result"]},
+            {"template": "结果：{{{result}}}", "variables": ["result"]},
+            {"template": "结果：{{result}}}", "variables": ["result"]},
             {"template": "结果：{{missing}}", "variables": ["result"]},
             {"template": "结果：{{result}}", "variables": ["result", "unused"]},
             {"variables": ["result", "result"]},
@@ -297,6 +323,48 @@ class MechanismAssetProposalTests(unittest.TestCase):
             with self.subTest(overrides=overrides):
                 with self.assertRaises(MechanismAssetProposalError):
                     propose_asset_from_mechanism(mechanism, make_profile(), valid_payload(**overrides), [], [])
+
+    def test_evidence_uses_original_observed_fact_text_and_first_matching_index(self) -> None:
+        mechanism = make_mechanism(
+            evidence_summary={
+                "observed_facts": [
+                    "  标题先展示结果承诺，再说明使用的工具和流程  ",
+                    "标题先展示结果承诺，再说明使用的工具和流程",
+                    "正文先写用户能完成的内容运营任务",
+                    "  正文先写用户能完成的内容运营任务  ",
+                ],
+                "inferences": ["内容把复杂工具包装成结果"],
+                "missing_information": ["未获取完整评论"],
+                "limitations": ["不能确认长期表现"],
+            }
+        )
+        payload = valid_payload(
+            selected_observed_facts=[
+                "标题先展示结果承诺，再说明使用的工具和流程",
+                "正文先写用户能完成的内容运营任务",
+            ]
+        )
+
+        result = propose_asset_from_mechanism(mechanism, make_profile(), payload, [], [])
+
+        self.assertEqual(
+            result.asset.selected_observed_facts,
+            [
+                "  标题先展示结果承诺，再说明使用的工具和流程  ",
+                "正文先写用户能完成的内容运营任务",
+            ],
+        )
+        self.assertEqual(
+            [item.source_fragment for item in result.asset_evidence],
+            ["evidence_summary.observed_facts[0]", "evidence_summary.observed_facts[2]"],
+        )
+        self.assertEqual(
+            [item.evidence_text for item in result.asset_evidence],
+            [
+                "  标题先展示结果承诺，再说明使用的工具和流程  ",
+                "正文先写用户能完成的内容运营任务",
+            ],
+        )
 
     def test_exact_duplicate_and_same_source_duplicate_handling(self) -> None:
         mechanism = make_mechanism()

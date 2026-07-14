@@ -215,11 +215,13 @@ def required_selected_facts(value: Any, mechanism: ContentMechanism) -> list[str
         raise MechanismAssetProposalError("每次最多选择 3 条机制事实。")
     if len(selected) != len(set(selected)):
         raise MechanismAssetProposalError("selected_observed_facts 不能重复。")
-    facts = {str(fact).strip(): index for index, fact in enumerate(mechanism.evidence_summary.get("observed_facts", []))}
+    facts = observed_fact_lookup(mechanism)
+    original_facts: list[str] = []
     for fact in selected:
         if fact not in facts:
             raise MechanismAssetProposalError("资产证据必须完全来自机制中的可观察事实。")
-    return selected
+        original_facts.append(facts[fact]["original_text"])
+    return original_facts
 
 
 def build_content_asset(
@@ -261,7 +263,7 @@ def build_asset_evidence(
     mechanism: ContentMechanism,
     proposal: dict[str, Any],
 ) -> list[ContentAssetEvidence]:
-    index_by_fact = {str(fact).strip(): index for index, fact in enumerate(mechanism.evidence_summary.get("observed_facts", []))}
+    facts = observed_fact_lookup(mechanism)
     return [
         ContentAssetEvidence(
             id=stable_id("asset-evidence", asset.id, str(position), fact),
@@ -269,8 +271,8 @@ def build_asset_evidence(
             source_type="content_mechanism",
             source_id=mechanism.id,
             source_version=mechanism.version,
-            source_fragment=f"evidence_summary.observed_facts[{index_by_fact[fact]}]",
-            evidence_text=fact,
+            source_fragment=f"evidence_summary.observed_facts[{facts[fact.strip()]['index']}]",
+            evidence_text=facts[fact.strip()]["original_text"],
             confidence_level=proposal["confidence_level"],
             confidence=CONTENT_MECHANISM_CONFIDENCE_SCORES[proposal["confidence_level"]],
             source_note=mechanism.name,
@@ -279,6 +281,14 @@ def build_asset_evidence(
         )
         for position, fact in enumerate(proposal["selected_observed_facts"], start=1)
     ]
+
+
+def observed_fact_lookup(mechanism: ContentMechanism) -> dict[str, dict[str, Any]]:
+    facts: dict[str, dict[str, Any]] = {}
+    for index, fact in enumerate(mechanism.evidence_summary.get("observed_facts", [])):
+        normalized = str(fact).strip()
+        facts.setdefault(normalized, {"index": index, "original_text": str(fact)})
+    return facts
 
 
 def build_provenance_records(

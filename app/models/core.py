@@ -191,17 +191,9 @@ def validate_template_contract(template: str, variables: list[str]) -> None:
     reject_hollow_text(template, "template")
     ensure_unique_texts(variables, "variables")
     ensure_variable_names(variables)
-    if re.search(r"{{\s*}}", template):
-        raise ValidationError("template placeholders cannot be empty")
-    if template.count("{{") != template.count("}}"):
-        raise ValidationError("template contains an unclosed placeholder")
-    if "{{" in re.sub(PLACEHOLDER_RE, "", template) or "}}" in re.sub(PLACEHOLDER_RE, "", template):
-        raise ValidationError("template contains invalid nested placeholders")
-    placeholders = [item.strip() for item in PLACEHOLDER_RE.findall(template)]
+    placeholders = extract_template_placeholders(template)
     if not placeholders:
         raise ValidationError("template must contain at least one declared placeholder")
-    if any(not VARIABLE_NAME_RE.match(item) for item in placeholders):
-        raise ValidationError("template placeholders must use valid variable names")
     fixed_text = PLACEHOLDER_RE.sub("", template).strip()
     if not fixed_text:
         raise ValidationError("template must contain fixed structure text")
@@ -211,6 +203,36 @@ def validate_template_contract(template: str, variables: list[str]) -> None:
         raise ValidationError("template contains undeclared placeholders")
     if declared != used:
         raise ValidationError("variables must all be used in template")
+
+
+def extract_template_placeholders(template: str) -> list[str]:
+    placeholders: list[str] = []
+    index = 0
+    while index < len(template):
+        if template.startswith("{{{", index):
+            raise ValidationError("template contains invalid nested placeholders")
+        if template.startswith("{{", index):
+            close = template.find("}}", index + 2)
+            if close == -1:
+                raise ValidationError("template contains an unclosed placeholder")
+            if close + 2 < len(template) and template[close + 2] == "}":
+                raise ValidationError("template contains invalid nested placeholders")
+            placeholder = template[index + 2 : close]
+            if not placeholder:
+                raise ValidationError("template placeholders cannot be empty")
+            if placeholder.strip() != placeholder:
+                raise ValidationError("template placeholders cannot contain surrounding spaces")
+            if not VARIABLE_NAME_RE.match(placeholder):
+                raise ValidationError("template placeholders must use valid variable names")
+            placeholders.append(placeholder)
+            index = close + 2
+            continue
+        if template.startswith("}}", index):
+            raise ValidationError("template contains a closing placeholder without an opening placeholder")
+        if template[index] == "}" and index > 0 and template[index - 1] == "}":
+            raise ValidationError("template contains invalid nested placeholders")
+        index += 1
+    return placeholders
 
 
 @dataclass
