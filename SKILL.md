@@ -149,6 +149,8 @@ When the user explicitly asks to turn a saved mechanism into a reusable content 
 4. Do not create a decision automatically.
 5. Tell the user the asset is not active, not connected to generation, and there is currently no asset activation command in this stage.
 
+Asset templates must contain at least one declared `{{variable_name}}` placeholder; this stage does not accept completely fixed no-variable templates or `variables=[]`.
+
 Content assets are reusable structured text components, not media files, not full finished posts, and not rules. Never use mechanism inferences, preferences, missing information, usage notes, examples, or account-fit wording as asset evidence. Never turn a deprecated mechanism into an asset. Never imply a mechanism-derived content asset affects topic generation or draft generation before a future explicit reference flow exists.
 
 ### 4. Generate Topics, Drafts, And Focused Revisions

@@ -158,7 +158,7 @@ python3 -m app.cli propose-asset-from-mechanism \
 - `examples`
 - `confidence_level`
 
-`template` 允许 Markdown，占位符只支持 `{{variable_name}}`。每个占位符必须在 `variables` 中声明，声明的变量也必须在模板中出现。变量名只支持英文字母、数字和下划线，并且不能以数字开头。
+`template` 允许 Markdown，占位符只支持 `{{variable_name}}`。每个占位符必须在 `variables` 中声明，声明的变量也必须在模板中出现。变量名只支持英文字母、数字和下划线，并且不能以数字开头。当前版本要求每个资产模板至少包含一个已声明占位符。完全固定的模板以及 `variables=[]` 不会被接受。
 
 该命令只创建：
 
