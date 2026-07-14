@@ -74,6 +74,47 @@ python3 -m app.cli import-mechanism \
 
 `confidence_level` 使用 `low`、`medium`、`high`。保存时会同步为模型内的数值置信度；如果证据来源单一、缺失信息较多或没有来源绑定，高置信度会被降级。
 
+## 从内容机制提出候选规则
+
+PR-5B 增加 `propose-rule-from-mechanism`，用于把一个已保存的内容机制、一个明确选择的账号档案，以及外部/Codex 整理出的结构化规则提案，转成待确认候选规则。
+
+```bash
+python3 -m app.cli propose-rule-from-mechanism \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --mechanism-id mechanism-result-framing \
+  --creator-id creator-main \
+  --file data/templates/mechanism-rule-proposal.template.json
+```
+
+结构化提案是一个 JSON object，必须包含：
+
+- `rule_statement`
+- `rule_type`
+- `applicable_scope`
+- `exclusions`
+- `selected_observed_facts`
+- `account_fit_reason`
+- `limitations`
+
+可选字段：
+
+- `title`
+- `risk_notes`
+- `examples`
+- `confidence_level`
+
+该命令只创建：
+
+- 1 条 `candidate` 候选规则
+- 1-3 条规则证据
+- 内容机制和账号档案到候选规则的来源记录
+
+它不会创建用户决策，不会自动批准规则，不会修改内容机制，也不会创建选题、草稿、发布任务或内容资产。创建成功后，规则仍未生效；下一步仍需要使用 `create-rule-decision` 和 `resolve-decision` 让用户确认或拒绝。
+
+证据只能来自机制中的 `observed_facts`。不能把推断、用户偏好、缺失信息或账号适配说明当作规则证据。若机制已废弃、指定账号档案不存在、选择的事实不匹配、规则类型不受支持、同一机制和账号已经有候选规则，或已有相同候选/正式规则，命令会失败且不写业务对象。相同规则如果只出现在已拒绝或已废弃历史中，可以重新提出，但会在摘要中提示。
+
+近义重复和语义冲突仍需人工判断；本地服务不调用模型、不做 embeddings、不做中文分词。
+
 ## 列出记录
 
 ```bash

@@ -599,11 +599,14 @@ BenchmarkAnalysis / External Analysis
 建议新增：
 
 ```bash
-python3 -m app.cli.main propose-rule-from-mechanism \
+python3 -m app.cli propose-rule-from-mechanism \
   --workspace .xhs-personal-content-skill/real-sample \
   --mechanism-id mechanism-xxxx \
-  --profile-id creator-main
+  --creator-id creator-main \
+  --file mechanism-rule-proposal.json
 ```
+
+PR-5B Stage B 收敛决策：该命令接收外部/Codex 整理出的结构化规则提案文件，本地 service 只负责治理、证据校验、重复检查和候选对象落盘，不负责自动编写规则语义。
 
 ### 5.4 输入
 
@@ -613,7 +616,7 @@ CreatorProfile
 Existing RuleCards
 RuleEvidence
 ProvenanceRecord
-DecisionRequest
+结构化 mechanism rule proposal
 ```
 
 ### 5.5 输出
@@ -622,10 +625,11 @@ DecisionRequest
 candidate RuleCard
 RuleEvidence
 ProvenanceRecord
-可选 DecisionRequest
 user_summary
 machine_summary
 ```
+
+PR-5B 不自动创建 DecisionRequest。成功后用户仍需通过现有 `create-rule-decision` 和 `resolve-decision` 流程确认或拒绝候选规则。
 
 ### 5.6 规则生成原则
 
@@ -660,6 +664,7 @@ Mechanism evidence ≠ user decision evidence
 ```text
 不自动批准规则。
 不自动进入 GenerationContext。
+不自动创建 DecisionRequest。
 不生成 TopicItem。
 不生成 ContentDraft。
 不修改 active rules。

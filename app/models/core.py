@@ -22,7 +22,14 @@ TagType = Literal["preference", "usage", "goal", "risk", "source", "custom"]
 RuleType = Literal["title", "structure", "topic", "cover", "script", "operation"]
 RuleStatus = Literal["candidate", "approved", "testing", "validated", "rejected", "deprecated"]
 RuleStrength = Literal["weak", "medium", "strong"]
-RuleEvidenceSourceType = Literal["benchmark_post", "benchmark_analysis", "user_feedback", "own_post", "review_record"]
+RuleEvidenceSourceType = Literal[
+    "benchmark_post",
+    "benchmark_analysis",
+    "content_mechanism",
+    "user_feedback",
+    "own_post",
+    "review_record",
+]
 ContentMechanismStatus = Literal["candidate", "active", "deprecated"]
 ContentMechanismConfidenceLevel = Literal["low", "medium", "high"]
 ContentMechanismSourceType = Literal[
@@ -56,6 +63,7 @@ ObjectType = Literal[
     "content_inbox",
     "capture_record",
     "benchmark_analysis",
+    "content_mechanism",
     "custom_tag",
     "rule_card",
     "rule_evidence",

@@ -2865,6 +2865,261 @@ class CliTests(unittest.TestCase):
             self.assertIn("无法读取结构化规则提案", output["error"])
             self.assertNotIn(str(missing_file), output["error"])
 
+    def test_propose_rule_from_mechanism_creates_candidate_artifacts_without_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            mechanism = ContentMechanism(
+                id="mechanism-cli-rule",
+                name="复杂工具结果化表达",
+                description="把复杂工具能力先翻译成用户能感知的运营结果。",
+                status="candidate",
+                confidence_level="medium",
+                confidence=0.6,
+                source_refs=[{"source_type": "external_analysis", "source_id": "external-001"}],
+                evidence_summary={
+                    "observed_facts": [
+                        "标题包含 Codex、Obsidian、10min 和爆款工作流",
+                        "封面展示工具图标、流程图和结果承诺",
+                    ],
+                    "inferences": ["工具被包装成内容运营结果"],
+                    "missing_information": ["未获取评论区"],
+                    "limitations": ["不能确认长期表现"],
+                },
+                problem="复杂工具内容容易只剩工具名。",
+                solution="先讲用户任务，再解释工具。",
+                applicable_scope=["AI 内容运营"],
+                limitations=["不能夸大时间承诺"],
+            )
+            profile = CreatorProfile(
+                id="creator-mechanism-rule",
+                name="主账号",
+                positioning="帮助创作者用 AI 做内容运营判断，而不是单纯工具教学。",
+                target_audience=["内容创作者"],
+                content_style=["真实", "克制"],
+                forbidden_expressions=[],
+                goals=["提升内容运营效率"],
+                content_formats=["图文"],
+                publish_frequency="每周 3 次",
+                notes="测试账号。",
+            )
+            JsonRepository(workspace, ContentMechanism).create(mechanism)
+            JsonRepository(workspace, CreatorProfile).create(profile)
+            proposal_file = workspace / "mechanism-rule.json"
+            proposal_file.write_text(
+                json.dumps(
+                    {
+                        "rule_statement": "讲 AI 工具时，优先表达用户能够完成的内容运营任务，而不是先堆叠工具功能。",
+                        "rule_type": "topic",
+                        "applicable_scope": ["AI 内容运营"],
+                        "exclusions": ["纯开发者技术教程"],
+                        "selected_observed_facts": [
+                            "标题包含 Codex、Obsidian、10min 和爆款工作流",
+                            "封面展示工具图标、流程图和结果承诺",
+                        ],
+                        "account_fit_reason": "当前账号定位强调 AI 内容运营判断，而不是单纯工具教学。",
+                        "limitations": ["不能夸大时间承诺"],
+                        "confidence_level": "high",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            before = self._snapshot_workspace(workspace)
+
+            output = self._run_cli(
+                [
+                    "propose-rule-from-mechanism",
+                    "--workspace",
+                    temp_dir,
+                    "--mechanism-id",
+                    mechanism.id,
+                    "--creator-id",
+                    profile.id,
+                    "--file",
+                    str(proposal_file),
+                ]
+            )
+
+            self.assertTrue(output["ok"])
+            result = output["result"]
+            self.assertEqual(result["created_count"], 1)
+            self.assertFalse(result["machine_summary"]["decision_request_created"])
+            self.assertIn("尚未生效", result["user_summary"])
+            self.assertIn("发起用户确认", result["user_summary"])
+            for forbidden in ("RuleCard", "content_mechanism", "candidate", ".json", temp_dir, mechanism.id):
+                self.assertNotIn(forbidden, result["user_summary"])
+            rules = JsonRepository(workspace, RuleCard).list_all()
+            self.assertEqual(len(rules), 1)
+            self.assertEqual(rules[0].status, "candidate")
+            self.assertEqual(len(JsonRepository(workspace, RuleEvidence).list_all()), 2)
+            self.assertEqual(len(JsonRepository(workspace, ProvenanceRecord).list_all()), 2)
+            self.assertEqual(JsonRepository(workspace, DecisionRequest).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, TopicItem).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, ContentDraft).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, PublishTask).list_all(), [])
+            after = self._snapshot_workspace(workspace)
+            changed = sorted(set(after) - set(before))
+            self.assertEqual(
+                changed,
+                sorted(
+                    [
+                        f"rule-cards/{rules[0].id}.json",
+                        f"rule-evidence/{result['machine_summary']['rule_evidence_ids'][0]}.json",
+                        f"rule-evidence/{result['machine_summary']['rule_evidence_ids'][1]}.json",
+                        f"provenance-records/{result['machine_summary']['provenance_ids'][0]}.json",
+                        f"provenance-records/{result['machine_summary']['provenance_ids'][1]}.json",
+                    ]
+                ),
+            )
+
+    def test_propose_rule_from_mechanism_failures_write_nothing_and_hide_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir) / "missing-workspace"
+            proposal_file = Path(temp_dir) / "bad-mechanism-rule.json"
+            proposal_file.write_text("{bad json", encoding="utf-8")
+
+            output = self._run_cli(
+                [
+                    "propose-rule-from-mechanism",
+                    "--workspace",
+                    str(workspace),
+                    "--mechanism-id",
+                    "mechanism-missing",
+                    "--creator-id",
+                    "creator-missing",
+                    "--file",
+                    str(proposal_file),
+                ],
+                expected_code=1,
+            )
+
+            self.assertFalse(output["ok"])
+            self.assertIn("无法读取结构化机制规则提案", output["error"])
+            self.assertNotIn(str(proposal_file), output["error"])
+            self.assertFalse(workspace.exists())
+
+    def test_propose_rule_from_mechanism_missing_records_write_no_business_objects(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            proposal_file = workspace / "mechanism-rule.json"
+            proposal_file.write_text(
+                json.dumps(
+                    {
+                        "rule_statement": "讲 AI 工具时，优先表达用户能够完成的内容运营任务。",
+                        "rule_type": "topic",
+                        "applicable_scope": ["AI 内容运营"],
+                        "exclusions": [],
+                        "selected_observed_facts": ["标题先讲用户能完成的内容运营任务"],
+                        "account_fit_reason": "当前账号定位强调内容运营判断。",
+                        "limitations": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            before = self._snapshot_workspace(workspace)
+
+            output = self._run_cli(
+                [
+                    "propose-rule-from-mechanism",
+                    "--workspace",
+                    temp_dir,
+                    "--mechanism-id",
+                    "mechanism-missing",
+                    "--creator-id",
+                    "creator-missing",
+                    "--file",
+                    str(proposal_file),
+                ],
+                expected_code=1,
+            )
+
+            self.assertIn("未找到指定内容机制或账号档案", output["error"])
+            self.assertEqual(JsonRepository(workspace, RuleCard).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, RuleEvidence).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, ProvenanceRecord).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, DecisionRequest).list_all(), [])
+            self.assertEqual(set(self._snapshot_workspace(workspace)) - set(before), set())
+
+    def test_propose_rule_from_mechanism_duplicate_writes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            mechanism = ContentMechanism(
+                id="mechanism-cli-duplicate",
+                name="结果化表达",
+                description="先表达用户结果。",
+                status="candidate",
+                confidence_level="low",
+                confidence=0.4,
+                evidence_summary={"observed_facts": ["标题先讲用户能完成的内容运营任务"]},
+                problem="工具内容容易看不懂。",
+                solution="先讲结果。",
+                applicable_scope=["AI 内容运营"],
+                limitations=[],
+            )
+            profile = CreatorProfile(
+                id="creator-cli-duplicate",
+                name="主账号",
+                positioning="帮助创作者用 AI 做内容运营判断。",
+                target_audience=["内容创作者"],
+                content_style=["真实"],
+                forbidden_expressions=[],
+                goals=["提升内容运营效率"],
+                content_formats=["图文"],
+                publish_frequency="每周 3 次",
+                notes="测试账号。",
+            )
+            existing = RuleCard(
+                id="rule-existing-duplicate",
+                name="旧规则",
+                type="topic",
+                source_ids=["old"],
+                applicable_scenarios=["AI 内容运营"],
+                rule_summary="讲 AI 工具时，优先表达用户能够完成的内容运营任务。",
+                examples=["旧证据"],
+                risks=[],
+                adaptation_notes="旧说明",
+                status="approved",
+            )
+            JsonRepository(workspace, ContentMechanism).create(mechanism)
+            JsonRepository(workspace, CreatorProfile).create(profile)
+            JsonRepository(workspace, RuleCard).create(existing)
+            proposal_file = workspace / "duplicate.json"
+            proposal_file.write_text(
+                json.dumps(
+                    {
+                        "rule_statement": existing.rule_summary,
+                        "rule_type": "topic",
+                        "applicable_scope": ["AI 内容运营"],
+                        "exclusions": [],
+                        "selected_observed_facts": ["标题先讲用户能完成的内容运营任务"],
+                        "account_fit_reason": "当前账号定位强调帮助创作者用 AI 做内容运营判断。",
+                        "limitations": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            before = self._snapshot_workspace(workspace)
+
+            output = self._run_cli(
+                [
+                    "propose-rule-from-mechanism",
+                    "--workspace",
+                    temp_dir,
+                    "--mechanism-id",
+                    mechanism.id,
+                    "--creator-id",
+                    profile.id,
+                    "--file",
+                    str(proposal_file),
+                ],
+                expected_code=1,
+            )
+
+            self.assertIn("已有相同", output["error"])
+            self.assertEqual(self._snapshot_workspace(workspace), before)
+
     def test_add_quality_review_creates_review_and_updates_draft_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir)
