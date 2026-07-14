@@ -1,4 +1,9 @@
-from app.generation.context import GenerationContext, GenerationTaskConstraints, build_generation_context
+from app.generation.context import (
+    GenerationContext,
+    GenerationTaskConstraints,
+    asset_reference_snapshot,
+    build_generation_context,
+)
 from app.generation.drafts import (
     DraftGenerationError,
     DraftGenerationResult,
@@ -16,6 +21,7 @@ __all__ = [
     "GenerationTaskConstraints",
     "TopicGenerationError",
     "TopicGenerationResult",
+    "asset_reference_snapshot",
     "build_generation_context",
     "generate_draft_from_topic",
     "generate_topics_from_context",

@@ -169,15 +169,19 @@ Topic generation:
 
 1. Use an explicit creator profile.
 2. Build from GenerationContext and task constraints.
-3. Create `TopicItem` candidates only.
-4. Explain limitations if context is limited.
+3. If the user explicitly asks to use a saved content asset, reference at most one active asset. Do not auto-pick assets.
+4. Create `TopicItem` candidates only.
+5. Explain limitations if context is limited.
 
 Draft generation:
 
 1. Use one selected `TopicItem`.
 2. Preserve the topic audit chain.
-3. Generate one `ContentDraft`.
-4. Include a concise diagnosis and risk/missing-info reminder.
+3. Preserve any explicit active content asset reference from the topic, or use at most one active asset explicitly named by the user.
+4. Generate one `ContentDraft`.
+5. Include a concise diagnosis and risk/missing-info reminder.
+
+Content asset references are generation references only. They require an explicitly selected active asset from the same creator profile, support at most one asset per generation, and are saved as an audit snapshot with asset id and version. When the caller provides an expected asset version, reject stale references instead of silently using the current asset. If a selected topic already carries an asset reference, do not silently replace it with a different explicit asset. Do not use candidate or deprecated assets. Do not scan all active assets. Do not render or substitute `{{variable_name}}` placeholders; pass the template and evidence as reference material only.
 
 Focused revision:
 

@@ -27,7 +27,11 @@ class DraftRevisionResult:
     machine_summary: dict[str, object]
 
 
-def generate_draft_from_topic(*, topic: TopicItem) -> DraftGenerationResult:
+def generate_draft_from_topic(
+    *,
+    topic: TopicItem,
+    reference_assets: list[dict[str, object]] | None = None,
+) -> DraftGenerationResult:
     if not isinstance(topic, TopicItem):
         raise DraftGenerationError("选题数据不可用：必须提供 TopicItem。")
     try:
@@ -35,6 +39,7 @@ def generate_draft_from_topic(*, topic: TopicItem) -> DraftGenerationResult:
     except ValidationError as exc:
         raise DraftGenerationError(f"选题数据不可用：{exc}") from exc
 
+    asset_references = resolve_draft_reference_assets(topic.reference_assets, reference_assets)
     diagnosis = build_diagnosis(
         risk_warnings=topic.risk_warnings,
         missing_information=topic.missing_information,
@@ -64,6 +69,7 @@ def generate_draft_from_topic(*, topic: TopicItem) -> DraftGenerationResult:
         task_constraints=dict(topic.task_constraints),
         risk_warnings=list(topic.risk_warnings),
         missing_information=list(topic.missing_information),
+        reference_assets=asset_references,
         diagnosis=diagnosis,
         created_by="codex",
     )
@@ -115,6 +121,7 @@ def revise_draft_with_focus(*, draft: ContentDraft, focus: str) -> DraftRevision
         task_constraints=dict(draft.task_constraints),
         risk_warnings=list(draft.risk_warnings),
         missing_information=list(draft.missing_information),
+        reference_assets=list(draft.reference_assets),
         parent_draft_id=draft.id,
         revision_focus=cleaned_focus,
         diagnosis=diagnosis,
@@ -148,6 +155,30 @@ def build_diagnosis(
         "issues": issues,
         "suggested_revision_focuses": unique_texts([revision_hint, "语气更符合账号", "降低夸大表达"])[:3],
     }
+
+
+def resolve_draft_reference_assets(
+    inherited_assets: list[dict[str, object]],
+    explicit_assets: list[dict[str, object]] | None,
+) -> list[dict[str, object]]:
+    inherited = list(inherited_assets)
+    if explicit_assets is None:
+        return inherited
+    explicit = list(explicit_assets)
+    if len(explicit) > 1:
+        raise DraftGenerationError("一次草稿生成最多显式引用 1 个内容资产。")
+    if inherited and explicit:
+        inherited_key = asset_reference_key(inherited[0])
+        explicit_key = asset_reference_key(explicit[0])
+        if inherited_key != explicit_key:
+            raise DraftGenerationError("选题已有关联内容资产，不能静默改用另一个资产。")
+    return explicit or inherited
+
+
+def asset_reference_key(reference: dict[str, object]) -> tuple[str, int | None]:
+    asset_id = string_value(reference.get("asset_id"))
+    version = reference.get("asset_version")
+    return (asset_id, version if isinstance(version, int) else None)
 
 
 def script_for_topic(topic: TopicItem) -> str:
@@ -198,6 +229,10 @@ def machine_summary_for(draft: ContentDraft) -> dict[str, object]:
         "task_constraints": dict(draft.task_constraints),
         "risk_warnings": list(draft.risk_warnings),
         "missing_information": list(draft.missing_information),
+        "reference_asset_ids": [
+            string_value(item.get("asset_id")) for item in draft.reference_assets if string_value(item.get("asset_id"))
+        ],
+        "reference_assets": list(draft.reference_assets),
         "diagnosis": dict(draft.diagnosis),
         "parent_draft_id": draft.parent_draft_id,
         "revision_focus": draft.revision_focus,
@@ -213,6 +248,8 @@ def build_generate_user_summary(*, topic: TopicItem, draft: ContentDraft, warnin
     ]
     if warnings:
         lines.append("主要风险/缺失提醒：" + "；".join(warnings))
+    if draft.reference_assets:
+        lines.append(f"已纳入 {len(draft.reference_assets)} 个显式引用资产。")
     lines.append("简短诊断：" + diagnosis_text(draft.diagnosis))
     lines.append("建议选择一个 revision focus，例如：" + "、".join(text_list(draft.diagnosis.get("suggested_revision_focuses"))))
     lines.append("下一步：执行 revise-draft，或人工确认后继续进入发布流程。")

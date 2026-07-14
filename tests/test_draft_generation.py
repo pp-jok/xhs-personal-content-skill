@@ -55,6 +55,26 @@ class DraftGenerationTests(unittest.TestCase):
         for forbidden in forbidden_user_texts(topic.id, draft.id, *topic.source_rule_cards):
             self.assertNotIn(forbidden, result.user_summary)
 
+    def test_draft_preserves_topic_reference_assets(self) -> None:
+        asset_reference = make_reference_asset("asset-opening", 2)
+        topic = make_topic(reference_assets=[asset_reference])
+
+        result = generate_draft_from_topic(topic=topic)
+
+        self.assertEqual(result.draft.reference_assets, [asset_reference])
+        self.assertEqual(result.machine_summary["reference_asset_ids"], ["asset-opening"])
+        self.assertEqual(result.machine_summary["reference_assets"], [asset_reference])
+
+    def test_draft_accepts_explicit_reference_asset_without_mutating_topic(self) -> None:
+        asset_reference = make_reference_asset("asset-opening", 2)
+        topic = make_topic()
+        before = topic.to_dict()
+
+        result = generate_draft_from_topic(topic=topic, reference_assets=[asset_reference])
+
+        self.assertEqual(result.draft.reference_assets, [asset_reference])
+        self.assertEqual(topic.to_dict(), before)
+
     def test_invalid_topic_data_fails_clearly(self) -> None:
         with self.assertRaises(DraftGenerationError) as caught:
             generate_draft_from_topic(topic=None)  # type: ignore[arg-type]
@@ -117,6 +137,7 @@ def make_topic(**overrides: object) -> TopicItem:
         "task_constraints": {"topic_area": "新人入职", "content_type": "图文"},
         "risk_warnings": ["规则缺少独立证据记录"],
         "missing_information": ["规则缺少独立证据记录"],
+        "reference_assets": [],
         "created_by": "codex",
     }
     data.update(overrides)
@@ -141,6 +162,7 @@ def make_draft() -> ContentDraft:
             "task_constraints": {"topic_area": "新人入职", "content_type": "图文"},
             "risk_warnings": ["规则缺少独立证据记录"],
             "missing_information": ["规则缺少独立证据记录"],
+            "reference_assets": [],
             "diagnosis": {
                 "strengths": ["选题对象明确。"],
                 "issues": ["开头还可以更直接。"],
@@ -149,6 +171,22 @@ def make_draft() -> ContentDraft:
             "created_by": "codex",
         }
     )
+
+
+def make_reference_asset(asset_id: str, version: int) -> dict[str, object]:
+    return {
+        "asset_id": asset_id,
+        "asset_version": version,
+        "asset_type": "opening_template",
+        "name": "结果优先开场",
+        "template": "先说结果：{{result}}。再说过程：{{process}}。",
+        "variables": ["result", "process"],
+        "applicable_scope": ["AI 内容运营"],
+        "limitations": ["不能夸大收益。"],
+        "selected_observed_facts": ["标题先展示结果承诺，再说明使用的工具和流程"],
+        "source_mechanism_ids": ["mechanism-result-framing"],
+        "confidence_level": "medium",
+    }
 
 
 def forbidden_user_texts(*ids: str) -> list[str]:

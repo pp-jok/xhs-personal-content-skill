@@ -13,6 +13,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.cli.main import main, save_provenance_record, save_rule_cards  # noqa: E402
 from app.capture.browser import BrowserCaptureResult  # noqa: E402
+from app.generation import asset_reference_snapshot  # noqa: E402
 from app.models.core import (  # noqa: E402
     BenchmarkAccount,
     BenchmarkAnalysis,
@@ -1730,6 +1731,150 @@ class CliTests(unittest.TestCase):
             self.assertTrue(output["ok"])
             self.assertEqual(topic.reference_posts, ["benchmark-post-001"])
 
+    def test_generate_topics_with_explicit_active_asset_writes_asset_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            approved = self._seed_rule(data_dir, "rule-approved", status="approved")
+            self._seed_rule_generation_support(data_dir, approved.id)
+            asset = self._seed_content_asset(data_dir, "asset-active-reference", status="active", version=2)
+            before_asset = JsonRepository(data_dir, ContentAsset).read(asset.id).to_dict()
+
+            output = self._run_cli(
+                [
+                    "generate-topics",
+                    "--workspace",
+                    temp_dir,
+                    "--profile-id",
+                    "creator-main",
+                    "--asset-id",
+                    asset.id,
+                    "--topic-count",
+                    "1",
+                ]
+            )
+
+            topic = JsonRepository(data_dir, TopicItem).read(output["result"]["topic_ids"][0])
+            self.assertEqual(topic.reference_assets[0]["asset_id"], asset.id)
+            self.assertEqual(topic.reference_assets[0]["asset_version"], 2)
+            self.assertEqual(output["result"]["machine_summary"]["reference_asset_ids"], [asset.id])
+            self.assertEqual(JsonRepository(data_dir, ContentAsset).read(asset.id).to_dict(), before_asset)
+
+    def test_generate_topics_rejects_non_active_or_missing_asset_without_topics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            approved = self._seed_rule(data_dir, "rule-approved", status="approved")
+            self._seed_rule_generation_support(data_dir, approved.id)
+            candidate = self._seed_content_asset(data_dir, "asset-candidate-reference", status="candidate")
+
+            non_active = self._run_cli(
+                [
+                    "generate-topics",
+                    "--workspace",
+                    temp_dir,
+                    "--profile-id",
+                    "creator-main",
+                    "--asset-id",
+                    candidate.id,
+                ],
+                expected_code=1,
+            )
+            missing = self._run_cli(
+                [
+                    "generate-topics",
+                    "--workspace",
+                    temp_dir,
+                    "--profile-id",
+                    "creator-main",
+                    "--asset-id",
+                    "missing-asset",
+                ],
+                expected_code=1,
+            )
+
+            self.assertIn("active", non_active["error"])
+            self.assertIn("not found", missing["error"])
+            self.assertEqual(JsonRepository(data_dir, TopicItem).list_all(), [])
+
+    def test_generate_topics_rejects_asset_version_mismatch_without_topics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            approved = self._seed_rule(data_dir, "rule-approved", status="approved")
+            self._seed_rule_generation_support(data_dir, approved.id)
+            asset = self._seed_content_asset(data_dir, "asset-versioned-reference", status="active", version=2)
+
+            output = self._run_cli(
+                [
+                    "generate-topics",
+                    "--workspace",
+                    temp_dir,
+                    "--profile-id",
+                    "creator-main",
+                    "--asset-id",
+                    asset.id,
+                    "--asset-version",
+                    "1",
+                ],
+                expected_code=1,
+            )
+
+            self.assertIn("版本", output["error"])
+            self.assertEqual(JsonRepository(data_dir, TopicItem).list_all(), [])
+
+    def test_generate_topics_rejects_asset_version_without_asset_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            approved = self._seed_rule(data_dir, "rule-approved", status="approved")
+            self._seed_rule_generation_support(data_dir, approved.id)
+
+            output = self._run_cli(
+                [
+                    "generate-topics",
+                    "--workspace",
+                    temp_dir,
+                    "--profile-id",
+                    "creator-main",
+                    "--asset-version",
+                    "1",
+                ],
+                expected_code=1,
+            )
+
+            self.assertIn("asset-id", output["error"])
+            self.assertEqual(JsonRepository(data_dir, TopicItem).list_all(), [])
+
+    def test_generate_topics_rejects_asset_profile_mismatch_without_topics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            approved = self._seed_rule(data_dir, "rule-approved", status="approved")
+            self._seed_rule_generation_support(data_dir, approved.id)
+            asset = self._seed_content_asset(
+                data_dir,
+                "asset-other-profile-reference",
+                status="active",
+                creator_profile_id="creator-other",
+            )
+
+            output = self._run_cli(
+                [
+                    "generate-topics",
+                    "--workspace",
+                    temp_dir,
+                    "--profile-id",
+                    "creator-main",
+                    "--asset-id",
+                    asset.id,
+                ],
+                expected_code=1,
+            )
+
+            self.assertIn("账号", output["error"])
+            self.assertEqual(JsonRepository(data_dir, TopicItem).list_all(), [])
+
     def test_generate_topics_rejects_profile_conflict_missing_profile_and_no_usable_rules_without_writes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir)
@@ -1968,6 +2113,81 @@ class CliTests(unittest.TestCase):
                 },
                 before_protected,
             )
+
+    def test_generate_draft_with_explicit_active_asset_writes_asset_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            topic = self._seed_audited_topic(data_dir)
+            asset = self._seed_content_asset(data_dir, "asset-draft-reference", status="active", version=2)
+            before_asset = JsonRepository(data_dir, ContentAsset).read(asset.id).to_dict()
+
+            output = self._run_cli(
+                [
+                    "generate-draft",
+                    "--workspace",
+                    temp_dir,
+                    "--topic-id",
+                    topic.id,
+                    "--asset-id",
+                    asset.id,
+                ]
+            )
+
+            draft = JsonRepository(data_dir, ContentDraft).read(output["result"]["draft_id"])
+            self.assertEqual(draft.reference_assets[0]["asset_id"], asset.id)
+            self.assertEqual(draft.reference_assets[0]["asset_version"], 2)
+            self.assertEqual(output["result"]["machine_summary"]["reference_asset_ids"], [asset.id])
+            self.assertEqual(JsonRepository(data_dir, ContentAsset).read(asset.id).to_dict(), before_asset)
+
+    def test_generate_draft_rejects_conflicting_explicit_and_inherited_asset_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            inherited = self._seed_content_asset(data_dir, "asset-inherited-reference", status="active", version=2)
+            explicit = self._seed_content_asset(data_dir, "asset-explicit-reference", status="active", version=2)
+            topic = self._seed_audited_topic(data_dir, reference_assets=[asset_reference_snapshot(inherited)])
+
+            output = self._run_cli(
+                [
+                    "generate-draft",
+                    "--workspace",
+                    temp_dir,
+                    "--topic-id",
+                    topic.id,
+                    "--asset-id",
+                    explicit.id,
+                ],
+                expected_code=1,
+            )
+
+            self.assertIn("资产", output["error"])
+            self.assertEqual(JsonRepository(data_dir, ContentDraft).list_all(), [])
+
+    def test_generate_draft_allows_same_explicit_and_inherited_asset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            asset = self._seed_content_asset(data_dir, "asset-same-reference", status="active", version=2)
+            topic = self._seed_audited_topic(data_dir, reference_assets=[asset_reference_snapshot(asset)])
+
+            output = self._run_cli(
+                [
+                    "generate-draft",
+                    "--workspace",
+                    temp_dir,
+                    "--topic-id",
+                    topic.id,
+                    "--asset-id",
+                    asset.id,
+                    "--asset-version",
+                    "2",
+                ]
+            )
+
+            draft = JsonRepository(data_dir, ContentDraft).read(output["result"]["draft_id"])
+            self.assertEqual(draft.reference_assets[0]["asset_id"], asset.id)
+            self.assertEqual(draft.reference_assets[0]["asset_version"], 2)
 
     def test_generate_draft_missing_topic_fails_without_writes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3874,7 +4094,7 @@ class CliTests(unittest.TestCase):
             )
         )
 
-    def _seed_audited_topic(self, data_dir: Path) -> TopicItem:
+    def _seed_audited_topic(self, data_dir: Path, *, reference_assets: Optional[list[dict[str, Any]]] = None) -> TopicItem:
         topic = TopicItem(
             id="topic-audit-001",
             title="新人入职前三天如何快速进入状态",
@@ -3891,9 +4111,42 @@ class CliTests(unittest.TestCase):
             task_constraints={"topic_area": "新人入职", "content_type": "图文"},
             risk_warnings=["规则缺少独立证据记录"],
             missing_information=["规则缺少独立证据记录"],
+            reference_assets=reference_assets or [],
             created_by="codex",
         )
         return JsonRepository(data_dir, TopicItem).create(topic)
+
+    def _seed_content_asset(
+        self,
+        data_dir: Path,
+        asset_id: str,
+        *,
+        status: str,
+        version: int = 1,
+        creator_profile_id: str = "creator-main",
+    ) -> ContentAsset:
+        asset = ContentAsset(
+            id=asset_id,
+            version=version,
+            status=status,
+            asset_type="opening_template",
+            name="结果优先开场",
+            description="先说明用户能得到的结果，再解释过程。",
+            template="先说结果：{{result}}。再说过程：{{process}}。",
+            variables=["result", "process"],
+            applicable_scope=["AI 内容运营"],
+            exclusions=["纯工具介绍"],
+            usage_notes=["填入具体结果和过程。"],
+            limitations=["不能夸大收益。"],
+            examples=["先说 10 分钟完成选题库，再说明步骤。"],
+            creator_profile_id=creator_profile_id,
+            source_mechanism_ids=["mechanism-result-framing"],
+            selected_observed_facts=["标题先展示结果承诺，再说明使用的工具和流程"],
+            account_fit_reason="适合当前账号强调具体结果的表达方式。",
+            confidence_level="medium",
+            confidence=0.6,
+        )
+        return JsonRepository(data_dir, ContentAsset).create(asset)
 
     def _snapshot_workspace(self, data_dir: Path) -> dict[str, str]:
         return {

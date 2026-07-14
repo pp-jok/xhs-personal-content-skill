@@ -14,6 +14,7 @@ from app.models.core import (  # noqa: E402
     BenchmarkAnalysis,
     BenchmarkPost,
     CaptureRecord,
+    ContentAsset,
     ContentMechanism,
     CreatorProfile,
     DecisionRequest,
@@ -150,6 +151,61 @@ class GenerationContextTests(unittest.TestCase):
             self.assertNotIn("mechanism-ignored", serialized)
             self.assertNotIn("结果前置机制", serialized)
             self.assertEqual(snapshot_workspace(workspace), before)
+
+    def test_explicit_active_asset_enters_context_as_reference_snapshot(self) -> None:
+        profile = self._profile()
+        asset = make_asset("asset-reference", status="active", version=3)
+
+        context = build_generation_context(
+            profile=profile,
+            rules=[make_rule("rule-ready", "approved", "标题点名具体对象", rule_type="title")],
+            evidence=[make_evidence("evidence-ready", "rule-ready", "标题点名职场新人。")],
+            provenance=[make_profile_provenance("provenance-ready", "rule-ready", profile.id, profile.version)],
+            decisions=[make_confirmed_decision("decision-ready", "rule-ready")],
+            task_constraints=GenerationTaskConstraints(),
+            reference_assets=[asset],
+        )
+
+        self.assertEqual(len(context.reference_assets), 1)
+        reference = context.reference_assets[0]
+        self.assertEqual(reference["asset_id"], asset.id)
+        self.assertEqual(reference["asset_version"], 3)
+        self.assertEqual(reference["asset_type"], "opening_template")
+        self.assertEqual(reference["template"], asset.template)
+        self.assertEqual(reference["scope"], asset.applicable_scope)
+        self.assertEqual(reference["source_mechanism_ids"], ["mechanism-result-framing"])
+        self.assertEqual(reference["evidence_facts"], asset.selected_observed_facts)
+        self.assertEqual(reference["selected_observed_facts"], asset.selected_observed_facts)
+        self.assertEqual(context.machine_summary["reference_asset_ids"], [asset.id])
+        self.assertEqual(context.machine_summary["reference_assets"], context.reference_assets)
+        self.assertIn("显式引用资产", context.user_summary)
+
+    def test_reference_assets_require_one_active_asset(self) -> None:
+        profile = self._profile()
+        base_kwargs = {
+            "profile": profile,
+            "rules": [make_rule("rule-ready", "approved", "标题点名具体对象", rule_type="title")],
+            "evidence": [make_evidence("evidence-ready", "rule-ready", "标题点名职场新人。")],
+            "provenance": [make_profile_provenance("provenance-ready", "rule-ready", profile.id, profile.version)],
+            "decisions": [make_confirmed_decision("decision-ready", "rule-ready")],
+            "task_constraints": GenerationTaskConstraints(),
+        }
+
+        for status in ("candidate", "deprecated"):
+            with self.subTest(status=status):
+                with self.assertRaises(ValueError) as caught:
+                    build_generation_context(**base_kwargs, reference_assets=[make_asset("asset-reference", status=status)])
+                self.assertIn("active", str(caught.exception))
+
+        with self.assertRaises(ValueError) as too_many:
+            build_generation_context(
+                **base_kwargs,
+                reference_assets=[
+                    make_asset("asset-one", status="active"),
+                    make_asset("asset-two", status="active"),
+                ],
+            )
+        self.assertIn("最多", str(too_many.exception))
 
     def test_excludes_candidate_even_with_confirmed_looking_decision(self) -> None:
         profile = self._profile()
@@ -434,6 +490,30 @@ def make_pending_decision(decision_id: str, rule_id: str) -> DecisionRequest:
         recommendation_reason="测试。",
         impact="测试。",
         status="pending",
+    )
+
+
+def make_asset(asset_id: str, *, status: str = "candidate", version: int = 1) -> ContentAsset:
+    return ContentAsset(
+        id=asset_id,
+        version=version,
+        status=status,
+        asset_type="opening_template",
+        name="结果优先开场",
+        description="先说明用户能得到的结果，再解释过程。",
+        template="先说结果：{{result}}。再说过程：{{process}}。",
+        variables=["result", "process"],
+        applicable_scope=["AI 内容运营"],
+        exclusions=["纯工具介绍"],
+        usage_notes=["填入具体结果和过程。"],
+        limitations=["不能夸大收益。"],
+        examples=["先说 10 分钟完成选题库，再说明步骤。"],
+        creator_profile_id="creator-main",
+        source_mechanism_ids=["mechanism-result-framing"],
+        selected_observed_facts=["标题先展示结果承诺，再说明使用的工具和流程"],
+        account_fit_reason="适合当前账号强调具体结果的表达方式。",
+        confidence_level="medium",
+        confidence=0.6,
     )
 
 
