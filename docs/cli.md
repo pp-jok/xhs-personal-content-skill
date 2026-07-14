@@ -198,7 +198,7 @@ python3 -m app.cli deprecate-content-asset \
 - `candidate` → `deprecated`
 - `active` → `deprecated`
 
-两个命令都必须提供 `--expected-version`。如果本地资产版本已经变化，命令会失败且不写入，避免把过期判断误应用到新版本资产。
+两个命令都必须提供 `--expected-version`。如果本地资产版本已经变化，命令会失败且不写入，避免把过期判断误应用到新版本资产。`--actor` 去除首尾空白后长度必须为 1-256 个字符。
 
 激活只改变内容资产的治理状态，不会自动把资产加入 GenerationContext，不会自动影响 `generate-topics`、`generate-draft` 或 `revise-draft`，也不会创建 `DecisionRequest`、来源记录、规则、选题或草稿。废弃会保留历史记录，但废弃资产不能用于后续显式生成引用。
 

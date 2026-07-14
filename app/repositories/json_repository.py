@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import Any, Callable, Generic, Optional, TypeVar
 
 from app.models.core import Actor, BaseModel, ObjectVersion, now_iso
 
@@ -20,6 +20,10 @@ COLLECTION_TO_OBJECT_TYPE = {
 
 class NotFoundError(FileNotFoundError):
     """Raised when a stored record cannot be found."""
+
+
+class RepositoryVersionConflictError(ValueError):
+    """Raised when a conditional update sees a different current version."""
 
 
 class JsonRepository(Generic[ModelT]):
@@ -87,6 +91,34 @@ class JsonRepository(Generic[ModelT]):
         data["updated_at"] = next_updated_at(current.updated_at)
         data["version"] = current.version + 1
         updated = self.model_type.from_dict(data)
+        self._write(updated)
+        return updated
+
+    def update_if_version(
+        self,
+        record_id: str,
+        *,
+        expected_version: int,
+        changes: Optional[dict[str, object]] = None,
+        update_fn: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
+        changed_by: Actor = "system",
+        change_note: str = "update-if-version",
+    ) -> ModelT:
+        current = self.read(record_id)
+        if current.version != expected_version:
+            raise RepositoryVersionConflictError("record version does not match expected version")
+
+        data = current.to_dict()
+        if changes:
+            data.update(changes)
+        if update_fn:
+            data = update_fn(dict(data))
+        data["id"] = current.id
+        data["created_at"] = current.created_at
+        data["updated_at"] = next_updated_at(current.updated_at)
+        data["version"] = current.version + 1
+        updated = self.model_type.from_dict(data)
+        self._write_version_snapshot(current, changed_by=changed_by, change_note=change_note)
         self._write(updated)
         return updated
 

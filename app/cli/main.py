@@ -1122,6 +1122,7 @@ def handle_propose_asset_from_mechanism(args: argparse.Namespace) -> dict[str, A
 
 def handle_activate_content_asset(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
+    require_existing_workspace(workspace)
     result = activate_content_asset(
         JsonRepository(workspace, ContentAsset),
         asset_id=args.asset_id,
@@ -1141,6 +1142,7 @@ def handle_activate_content_asset(args: argparse.Namespace) -> dict[str, Any]:
 
 def handle_deprecate_content_asset(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
+    require_existing_workspace(workspace)
     result = deprecate_content_asset(
         JsonRepository(workspace, ContentAsset),
         asset_id=args.asset_id,
@@ -1156,6 +1158,11 @@ def handle_deprecate_content_asset(args: argparse.Namespace) -> dict[str, Any]:
         "user_summary": result.user_summary,
         "machine_summary": result.machine_summary,
     }
+
+
+def require_existing_workspace(workspace: Path) -> None:
+    if not workspace.exists() or not workspace.is_dir():
+        raise ValueError("工作区不存在或不可用，请先初始化或选择已有工作区。")
 
 
 def handle_promote_to_benchmark(args: argparse.Namespace) -> dict[str, Any]:

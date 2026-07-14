@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.models.core import ContentAsset, ValidationError
+from app.repositories import RepositoryVersionConflictError
 
 
 STATUS_LABELS = {
@@ -29,10 +30,13 @@ class ContentAssetRepository(Protocol):
     def read(self, record_id: str) -> ContentAsset:
         ...
 
-    def update(
+    def update_if_version(
         self,
         record_id: str,
-        changes: dict[str, object],
+        *,
+        expected_version: int,
+        changes=None,
+        update_fn=None,
         changed_by: str = "system",
         change_note: str = "update",
     ) -> ContentAsset:
@@ -101,18 +105,35 @@ def transition_content_asset(
     target_status: str,
 ) -> ContentAssetLifecycleResult:
     validate_inputs(asset_id=asset_id, expected_version=expected_version, actor=actor)
-    asset = read_asset(repository, asset_id)
-    validate_transition(asset, expected_version=expected_version, allowed_from=allowed_from, target_status=target_status)
-    previous_status = asset.status
-    previous_version = asset.version
+    previous_status = ""
+    previous_version = 0
+
+    def apply_transition(current_data: dict[str, Any]) -> dict[str, Any]:
+        nonlocal previous_status, previous_version
+        current = read_asset_data(current_data)
+        validate_transition(current, expected_version=expected_version, allowed_from=allowed_from, target_status=target_status)
+        previous_status = current.status
+        previous_version = current.version
+        updated_data = current.to_dict()
+        updated_data["status"] = target_status
+        return updated_data
 
     try:
-        updated = repository.update(
-            asset.id,
-            {"status": target_status},
+        updated = repository.update_if_version(
+            asset_id.strip(),
+            expected_version=expected_version,
+            update_fn=apply_transition,
             changed_by=actor.strip(),
             change_note=f"content-asset-{operation}",
         )
+    except ContentAssetLifecycleError:
+        raise
+    except FileNotFoundError as exc:
+        raise ContentAssetLifecycleError("内容资产不存在，请确认后重试。") from exc
+    except RepositoryVersionConflictError as exc:
+        raise ContentAssetLifecycleError("版本冲突：内容资产已变化，请重新查看后再操作。") from exc
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise ContentAssetLifecycleError("内容资产数据无效，暂不能执行生命周期操作。") from exc
     except Exception as exc:
         raise ContentAssetLifecycleError("内容资产更新失败，本次未完成。") from exc
 
@@ -130,10 +151,12 @@ def transition_content_asset(
 def validate_inputs(*, asset_id: str, expected_version: int, actor: str) -> None:
     if not isinstance(asset_id, str) or not asset_id.strip() or "/" in asset_id or "\\" in asset_id:
         raise ContentAssetLifecycleError("输入参数无效：内容资产标识不可为空或包含路径分隔符。")
-    if not isinstance(expected_version, int) or isinstance(expected_version, bool) or expected_version < 1:
+    if type(expected_version) is not int or expected_version < 1:
         raise ContentAssetLifecycleError("输入参数无效：expected version 必须是大于等于 1 的整数。")
     if not isinstance(actor, str) or not actor.strip():
         raise ContentAssetLifecycleError("输入参数无效：actor 不能为空。")
+    if len(actor.strip()) > 256:
+        raise ContentAssetLifecycleError("输入参数无效：actor 长度不能超过 256 个字符。")
 
 
 def read_asset(repository: ContentAssetRepository, asset_id: str) -> ContentAsset:
@@ -148,6 +171,15 @@ def read_asset(repository: ContentAssetRepository, asset_id: str) -> ContentAsse
     try:
         asset.validate()
     except ValidationError as exc:
+        raise ContentAssetLifecycleError("内容资产数据无效，暂不能执行生命周期操作。") from exc
+    return asset
+
+
+def read_asset_data(data: dict[str, Any]) -> ContentAsset:
+    try:
+        asset = ContentAsset.from_dict(data)
+        asset.validate()
+    except (ValidationError, ValueError, TypeError) as exc:
         raise ContentAssetLifecycleError("内容资产数据无效，暂不能执行生命周期操作。") from exc
     return asset
 

@@ -3394,6 +3394,69 @@ class CliTests(unittest.TestCase):
                 self.assertNotIn(temp_dir, output["error"])
             self.assertEqual(self._snapshot_workspace(workspace), before)
 
+    def test_content_asset_lifecycle_cli_rejects_missing_or_file_workspace_without_creating_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            missing_workspace = base / "missing-workspace"
+            file_workspace = base / "workspace-file"
+            file_workspace.write_text("not a directory", encoding="utf-8")
+
+            activate = self._run_cli(
+                [
+                    "activate-content-asset",
+                    "--workspace",
+                    str(missing_workspace),
+                    "--asset-id",
+                    "asset-missing",
+                    "--expected-version",
+                    "1",
+                    "--actor",
+                    "user",
+                ],
+                expected_code=1,
+            )
+            deprecate = self._run_cli(
+                [
+                    "deprecate-content-asset",
+                    "--workspace",
+                    str(file_workspace),
+                    "--asset-id",
+                    "asset-missing",
+                    "--expected-version",
+                    "1",
+                    "--actor",
+                    "user",
+                ],
+                expected_code=1,
+            )
+
+            self.assertFalse(missing_workspace.exists())
+            self.assertTrue(file_workspace.is_file())
+            self.assertEqual(file_workspace.read_text(encoding="utf-8"), "not a directory")
+            for output in (activate, deprecate):
+                self.assertFalse(output["ok"])
+                self.assertIn("工作区不存在或不可用", output["error"])
+                self.assertNotIn(temp_dir, output["error"])
+                self.assertNotIn("Traceback", output["error"])
+                self.assertNotIn("ContentAsset", output["error"])
+                self.assertNotIn("content-assets", output["error"])
+
+    def test_content_asset_lifecycle_cli_rejects_non_integer_expected_version(self) -> None:
+        with self.assertRaises(SystemExit):
+            self._run_cli(
+                [
+                    "activate-content-asset",
+                    "--workspace",
+                    ".",
+                    "--asset-id",
+                    "asset-missing",
+                    "--expected-version",
+                    "abc",
+                    "--actor",
+                    "user",
+                ]
+            )
+
     def test_propose_rule_from_mechanism_missing_records_write_no_business_objects(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)

@@ -77,6 +77,59 @@ class FailingUpdateRepository:
         self.update_called = True
         raise OSError("disk failed")
 
+    def update_if_version(
+        self,
+        record_id: str,
+        *,
+        expected_version: int,
+        changes=None,
+        update_fn=None,
+        changed_by: str = "system",
+        change_note: str = "update",
+    ) -> ContentAsset:
+        self.update_called = True
+        raise OSError("disk failed")
+
+
+class RacingRepository:
+    def __init__(self, first: ContentAsset, latest: ContentAsset) -> None:
+        self.first = first
+        self.latest = latest
+        self.update_called = False
+
+    def read(self, asset_id: str) -> ContentAsset:
+        return self.first
+
+    def update(self, record_id: str, changes: dict[str, object], changed_by: str = "system", change_note: str = "update") -> ContentAsset:
+        self.update_called = True
+        data = self.latest.to_dict()
+        data.update(changes)
+        data["version"] = self.latest.version + 1
+        self.latest = ContentAsset.from_dict(data)
+        return self.latest
+
+    def update_if_version(
+        self,
+        record_id: str,
+        *,
+        expected_version: int,
+        changes=None,
+        update_fn=None,
+        changed_by: str = "system",
+        change_note: str = "update",
+    ) -> ContentAsset:
+        if self.latest.version != expected_version:
+            raise ContentAssetLifecycleError("版本冲突：内容资产已变化，请重新查看后再操作。")
+        self.update_called = True
+        data = self.latest.to_dict()
+        if changes:
+            data.update(changes)
+        if update_fn:
+            data = update_fn(data)
+        data["version"] = self.latest.version + 1
+        self.latest = ContentAsset.from_dict(data)
+        return self.latest
+
 
 class ContentAssetLifecycleTests(unittest.TestCase):
     def test_activate_candidate_asset_updates_only_lifecycle_fields(self) -> None:
@@ -202,10 +255,17 @@ class ContentAssetLifecycleTests(unittest.TestCase):
 
             for kwargs in (
                 {"asset_id": "", "expected_version": 1, "actor": "user"},
+                {"asset_id": "   ", "expected_version": 1, "actor": "user"},
                 {"asset_id": "bad/path", "expected_version": 1, "actor": "user"},
+                {"asset_id": valid.id, "expected_version": True, "actor": "user"},
+                {"asset_id": valid.id, "expected_version": False, "actor": "user"},
                 {"asset_id": valid.id, "expected_version": 0, "actor": "user"},
                 {"asset_id": valid.id, "expected_version": -1, "actor": "user"},
+                {"asset_id": valid.id, "expected_version": 1.0, "actor": "user"},
+                {"asset_id": valid.id, "expected_version": "1", "actor": "user"},
+                {"asset_id": valid.id, "expected_version": None, "actor": "user"},
                 {"asset_id": valid.id, "expected_version": 1, "actor": "   "},
+                {"asset_id": valid.id, "expected_version": 1, "actor": "x" * 257},
             ):
                 with self.subTest(kwargs=kwargs):
                     with self.assertRaises(ContentAssetLifecycleError):
@@ -227,6 +287,9 @@ class ContentAssetLifecycleTests(unittest.TestCase):
             self.assertIn("内容资产数据无效", str(invalid.exception))
             self.assertEqual(repo.read(valid.id).to_dict(), before)
 
+            accepted = activate_content_asset(repo, asset_id=valid.id, expected_version=1, actor="  " + ("x" * 256) + "  ")
+            self.assertEqual(accepted.machine_summary["actor"], "x" * 256)
+
     def test_repository_update_failure_keeps_original_and_retains_cause(self) -> None:
         asset = make_asset()
         repo = FailingUpdateRepository(asset)
@@ -238,6 +301,19 @@ class ContentAssetLifecycleTests(unittest.TestCase):
         self.assertIsInstance(context.exception.__cause__, OSError)
         self.assertEqual(asset.status, "candidate")
         self.assertEqual(asset.version, 1)
+
+    def test_lifecycle_rejects_stale_version_at_repository_write_boundary(self) -> None:
+        first = make_asset(version=1)
+        latest = ContentAsset.from_dict({**first.to_dict(), "version": 2, "status": "candidate"})
+        repo = RacingRepository(first, latest)
+
+        with self.assertRaises(ContentAssetLifecycleError) as context:
+            activate_content_asset(repo, asset_id=first.id, expected_version=1, actor="user")
+
+        self.assertIn("版本冲突", str(context.exception))
+        self.assertFalse(repo.update_called)
+        self.assertEqual(repo.latest.status, "candidate")
+        self.assertEqual(repo.latest.version, 2)
 
 
 if __name__ == "__main__":
