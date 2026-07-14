@@ -11,6 +11,8 @@ from app.models.core import (  # noqa: E402
     BenchmarkAccount,
     BenchmarkAnalysis,
     BenchmarkPost,
+    ContentAsset,
+    ContentAssetEvidence,
     ContentMechanism,
     ContentQualityReview,
     ContentDraft,
@@ -126,9 +128,11 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(data["created_by"], "user")
 
     def test_collection_names_are_unique(self) -> None:
-        self.assertEqual(len(MODEL_TYPES), 19)
+        self.assertEqual(len(MODEL_TYPES), 21)
         self.assertEqual(MODEL_TYPES["creator-profiles"], CreatorProfile)
         self.assertEqual(MODEL_TYPES["benchmark-analyses"], BenchmarkAnalysis)
+        self.assertEqual(MODEL_TYPES["content-assets"], ContentAsset)
+        self.assertEqual(MODEL_TYPES["content-asset-evidence"], ContentAssetEvidence)
         self.assertEqual(MODEL_TYPES["content-inbox"], ContentInboxItem)
         self.assertEqual(MODEL_TYPES["content-mechanisms"], ContentMechanism)
         self.assertEqual(MODEL_TYPES["content-quality-reviews"], ContentQualityReview)
@@ -221,6 +225,20 @@ class ModelTests(unittest.TestCase):
 
         self.assertEqual(evidence.source_type, "content_mechanism")
         self.assertEqual(provenance.source_object_type, "content_mechanism")
+
+        asset_provenance = ProvenanceRecord(
+            id="provenance-asset",
+            target_object_type="content_asset",
+            target_object_id="asset-001",
+            source_object_type="content_mechanism",
+            source_object_id="mechanism-001",
+            source_version=1,
+            actor="codex",
+            artifact_nature="recommendation",
+            method="propose-asset-from-mechanism",
+            note="候选资产来自内容机制。",
+        )
+        self.assertEqual(asset_provenance.target_object_type, "content_asset")
 
     def test_decision_request_status_and_selected_option_are_validated(self) -> None:
         decision = DecisionRequest(

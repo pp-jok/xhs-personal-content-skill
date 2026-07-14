@@ -28,9 +28,12 @@ from app.generation import (
     revise_draft_with_focus,
 )
 from app.mechanisms import (
+    MechanismAssetProposalError,
     MechanismRuleProposalError,
     import_mechanism_candidate,
+    persist_mechanism_asset_proposal,
     persist_mechanism_rule_proposal,
+    propose_asset_from_mechanism,
     propose_rule_from_mechanism,
 )
 from app.models.core import (
@@ -41,6 +44,8 @@ from app.models.core import (
     BenchmarkAnalysis,
     BenchmarkPost,
     CaptureRecord,
+    ContentAsset,
+    ContentAssetEvidence,
     ContentDraft,
     ContentInboxItem,
     ContentMechanism,
@@ -86,6 +91,8 @@ OBJECT_TYPE_TO_MODEL: dict[str, type[BaseModel]] = {
     "capture_record": CaptureRecord,
     "benchmark_analysis": BenchmarkAnalysis,
     "content_mechanism": ContentMechanism,
+    "content_asset": ContentAsset,
+    "content_asset_evidence": ContentAssetEvidence,
     "custom_tag": CustomTag,
     "rule_card": RuleCard,
     "rule_evidence": RuleEvidence,
@@ -336,6 +343,16 @@ def build_parser() -> argparse.ArgumentParser:
     mechanism_rule_parser.add_argument("--creator-id", required=True, help="CreatorProfile id.")
     mechanism_rule_parser.add_argument("--file", required=True, help="Structured mechanism rule proposal JSON file.")
     mechanism_rule_parser.set_defaults(handler=handle_propose_rule_from_mechanism)
+
+    mechanism_asset_parser = subparsers.add_parser(
+        "propose-asset-from-mechanism",
+        help="Validate and save one candidate content asset from one content mechanism proposal.",
+    )
+    mechanism_asset_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    mechanism_asset_parser.add_argument("--mechanism-id", required=True, help="ContentMechanism id.")
+    mechanism_asset_parser.add_argument("--creator-id", required=True, help="CreatorProfile id.")
+    mechanism_asset_parser.add_argument("--file", required=True, help="Structured mechanism asset proposal JSON file.")
+    mechanism_asset_parser.set_defaults(handler=handle_propose_asset_from_mechanism)
 
     promote_parser = subparsers.add_parser("promote-to-benchmark", help="Promote one analyzed inbox item to benchmark account and post records.")
     promote_parser.add_argument("--workspace", required=True, help="Workspace directory.")
@@ -1031,6 +1048,47 @@ def handle_propose_rule_from_mechanism(args: argparse.Namespace) -> dict[str, An
         create_evidence=evidence_repo.create,
         create_provenance=provenance_repo.create,
         delete_rule=rule_repo.delete,
+        delete_evidence=evidence_repo.delete,
+        delete_provenance=provenance_repo.delete,
+    )
+    return {
+        "created_count": 1 if persisted.created else 0,
+        "user_summary": persisted.user_summary,
+        "machine_summary": persisted.machine_summary,
+    }
+
+
+def handle_propose_asset_from_mechanism(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    try:
+        payload = read_json_object(Path(args.file), "mechanism asset proposal")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise MechanismAssetProposalError("无法读取结构化机制资产提案，请检查文件后重试。") from exc
+    if not isinstance(payload, dict):
+        raise MechanismAssetProposalError("结构化机制资产提案必须是一个 JSON object。")
+    try:
+        mechanism = JsonRepository(workspace, ContentMechanism).read(args.mechanism_id)
+        profile = JsonRepository(workspace, CreatorProfile).read(args.creator_id)
+    except FileNotFoundError as exc:
+        raise MechanismAssetProposalError("未找到指定内容机制或账号档案，暂不能创建候选内容资产。") from exc
+
+    result = propose_asset_from_mechanism(
+        mechanism=mechanism,
+        profile=profile,
+        proposal_payload=payload,
+        existing_assets=JsonRepository(workspace, ContentAsset).list_all(),
+        existing_provenance=JsonRepository(workspace, ProvenanceRecord).list_all(),
+    )
+
+    asset_repo = JsonRepository(workspace, ContentAsset)
+    evidence_repo = JsonRepository(workspace, ContentAssetEvidence)
+    provenance_repo = JsonRepository(workspace, ProvenanceRecord)
+    persisted = persist_mechanism_asset_proposal(
+        result,
+        create_asset=asset_repo.create,
+        create_evidence=evidence_repo.create,
+        create_provenance=provenance_repo.create,
+        delete_asset=asset_repo.delete,
         delete_evidence=evidence_repo.delete,
         delete_provenance=provenance_repo.delete,
     )

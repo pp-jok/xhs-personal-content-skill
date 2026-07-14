@@ -699,16 +699,31 @@ Mechanism evidence ≠ user decision evidence
 
 ### 6.1 目标
 
-从 active ContentMechanism 生成可复用内容资产。
+从 ContentMechanism 生成可复用内容资产。
 
 新链路：
 
 ```text
-active ContentMechanism
-→ ContentAsset
+ContentMechanism(candidate 或 active)
++ CreatorProfile
++ 外部结构化 asset proposal
+→ ContentAsset(candidate)
 ```
 
 内容资产不是规则，不是生成硬约束，只是可复用素材和模板。
+
+PR-5C Stage B 收敛决策：
+
+```text
+1. candidate 和 active ContentMechanism 都可以作为资产来源。
+2. deprecated ContentMechanism 必须拒绝。
+3. 新建 ContentAsset 状态始终为 candidate。
+4. PR-5C 不实现 activate-mechanism、deprecate-mechanism、activate-content-asset、deprecate-content-asset 或 create-asset-decision。
+5. PR-5C 不接入 GenerationContext；candidate 和 active ContentAsset 都不会自动影响 generate-topics、generate-draft 或 revise-draft。
+6. 本地 service 只负责治理、证据校验、重复检查和候选对象落盘，不负责自动创作资产内容。
+7. 资产提案由外部/Codex 整理为结构化 JSON。
+8. 第一版只支持结构化文本资产，不支持媒体文件、远程 URL、OCR、视频解析、完整文章成稿、固定发布文案或批量导入。
+```
 
 ### 6.2 新增模型
 
@@ -718,14 +733,23 @@ active ContentMechanism
 
 ```text
 id
-mechanism_id
-asset_type
-title
-content
-applicable_scope
-limitations
-source_mechanism_ids
 status
+asset_type
+name
+description
+template
+variables
+applicable_scope
+exclusions
+usage_notes
+limitations
+examples
+creator_profile_id
+source_mechanism_ids
+selected_observed_facts
+account_fit_reason
+confidence_level
+confidence
 created_at
 created_by
 version
@@ -737,18 +761,20 @@ version
 
 ```text
 title_pattern
-opening_pattern
-structure_pattern
-cover_pattern
-topic_angle
-script_pattern
-comment_prompt
+cover_structure
+opening_template
+body_structure
+cta_template
+comparison_framework
+case_framework
+image_text_structure
+topic_framework
 ```
 
 ### 6.4 status
 
 ```text
-draft
+candidate
 active
 deprecated
 ```
@@ -758,9 +784,11 @@ deprecated
 建议新增：
 
 ```bash
-python3 -m app.cli.main generate-content-assets-from-mechanism \
+python3 -m app.cli propose-asset-from-mechanism \
   --workspace .xhs-personal-content-skill/real-sample \
-  --mechanism-id mechanism-xxxx
+  --mechanism-id mechanism-xxxx \
+  --creator-id creator-main \
+  --file data/templates/mechanism-asset-proposal.template.json
 ```
 
 ### 6.6 PR-5C 不做事项
@@ -774,6 +802,10 @@ ContentAsset 不覆盖 active rules。
 ContentAsset 不自动发布。
 不做复杂资产库 UI。
 不做多案例归纳。
+不做资产激活。
+不做资产决策。
+不做媒体资产。
+不做批量导入。
 ```
 
 ### 6.7 测试要求
@@ -783,13 +815,13 @@ ContentAsset 不自动发布。
 ```text
 1. ContentAsset 可以 from_dict / to_dict / validate。
 2. asset_type 必须属于允许列表。
-3. status 必须属于 draft / active / deprecated。
+3. status 必须属于 candidate / active / deprecated。
 4. deprecated mechanism 不能生成资产。
-5. candidate mechanism 默认不能生成 active asset；如允许生成，也必须是 draft。
-6. active mechanism 可以生成多个 draft/active ContentAsset。
+5. candidate mechanism 可以生成 candidate asset。
+6. active mechanism 可以生成 candidate ContentAsset。
 7. 生成资产不修改 RuleCard / TopicItem / ContentDraft。
 8. user_summary 隐藏内部路径和 JSON。
-9. machine_summary 保留 asset_ids、mechanism_id、asset_types。
+9. machine_summary 保留 asset_id、mechanism_id、asset_type。
 10. 资产必须带 applicable_scope 和 limitations。
 ```
 
