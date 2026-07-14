@@ -12,6 +12,7 @@ RULE_TYPES = {"title", "structure", "topic", "cover", "script", "operation"}
 CONFIDENCE_VALUES = {"low": 0.4, "medium": 0.6, "high": 0.8}
 CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
 ACTIVE_DUPLICATE_STATUSES = {"candidate", "approved", "testing", "validated"}
+HISTORICAL_DUPLICATE_STATUS_ORDER = {"rejected": 0, "deprecated": 1}
 REQUIRED_FIELDS = {
     "rule_statement",
     "rule_type",
@@ -56,17 +57,31 @@ def propose_rule_from_mechanism(
         raise MechanismRuleProposalError("该内容机制当前状态不支持转为候选规则。")
 
     proposal = validate_proposal_payload(proposal_payload, mechanism, profile)
-    duplicate = find_exact_duplicate(proposal, existing_rules)
+    duplicates = find_exact_duplicates(proposal, existing_rules)
     duplicate_check = {"status": "none", "existing_rule_id": ""}
     warnings: list[str] = []
-    if duplicate and duplicate.status in ACTIVE_DUPLICATE_STATUSES:
+    blocking_duplicates = sorted(
+        [rule for rule in duplicates if rule.status in ACTIVE_DUPLICATE_STATUSES],
+        key=lambda rule: (rule.status, rule.id),
+    )
+    historical_duplicates = sorted(
+        [rule for rule in duplicates if rule.status in {"rejected", "deprecated"}],
+        key=lambda rule: (HISTORICAL_DUPLICATE_STATUS_ORDER[rule.status], rule.id),
+    )
+    if blocking_duplicates:
         raise MechanismRuleProposalError("已有相同候选或正式规则，本次不重复保存。")
-    if duplicate and duplicate.status == "rejected":
+    historical_statuses = {rule.status for rule in historical_duplicates}
+    if "rejected" in historical_statuses:
         warnings.append("相同规则曾被拒绝；本次将作为新的待确认候选保留。")
-        duplicate_check = {"status": "rejected_history", "existing_rule_id": duplicate.id}
-    if duplicate and duplicate.status == "deprecated":
+    if "deprecated" in historical_statuses:
         warnings.append("相同规则曾被废弃；本次将作为新的待确认候选保留。")
-        duplicate_check = {"status": "deprecated_history", "existing_rule_id": duplicate.id}
+    if historical_duplicates:
+        history_status = "rejected_history" if "rejected" in historical_statuses else "deprecated_history"
+        duplicate_check = {
+            "status": history_status,
+            "existing_rule_id": historical_duplicates[0].id,
+            "existing_rule_ids": [rule.id for rule in historical_duplicates],
+        }
 
     same_source = find_same_mechanism_profile_candidate(mechanism, profile, existing_rules, existing_provenance)
     if same_source:
@@ -315,12 +330,13 @@ def persist_mechanism_rule_proposal(
     return result
 
 
-def find_exact_duplicate(proposal: dict[str, Any], existing_rules: list[RuleCard]) -> RuleCard | None:
+def find_exact_duplicates(proposal: dict[str, Any], existing_rules: list[RuleCard]) -> list[RuleCard]:
     key = duplicate_key(proposal["rule_statement"], proposal["rule_type"], proposal["applicable_scope"])
-    for rule in existing_rules:
-        if key == duplicate_key(rule.rule_summary, rule.type, rule.applicable_scenarios):
-            return rule
-    return None
+    return [
+        rule
+        for rule in existing_rules
+        if key == duplicate_key(rule.rule_summary, rule.type, rule.applicable_scenarios)
+    ]
 
 
 def find_same_mechanism_profile_candidate(

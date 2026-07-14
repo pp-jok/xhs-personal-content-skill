@@ -97,6 +97,21 @@ def valid_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+def make_duplicate_rule(status: str, *, rule_id: str = "") -> RuleCard:
+    return RuleCard(
+        id=rule_id or f"rule-duplicate-{status}",
+        name="重复规则",
+        type="topic",
+        source_ids=["analysis-1"],
+        applicable_scenarios=["工作流内容", "AI 内容运营"],
+        rule_summary=str(valid_payload()["rule_statement"]),
+        examples=["旧证据"],
+        risks=[],
+        adaptation_notes="旧说明",
+        status=status,
+    )
+
+
 class MechanismRuleProposalTests(unittest.TestCase):
     def test_candidate_mechanism_creates_candidate_rule_evidence_and_provenance(self) -> None:
         mechanism = make_mechanism()
@@ -156,18 +171,7 @@ class MechanismRuleProposalTests(unittest.TestCase):
     def test_exact_active_duplicate_blocks_but_rejected_and_deprecated_warn(self) -> None:
         mechanism = make_mechanism()
         profile = make_profile()
-        existing = RuleCard(
-            id="rule-existing",
-            name="旧规则",
-            type="topic",
-            source_ids=["analysis-1"],
-            applicable_scenarios=["工作流内容", "AI 内容运营"],
-            rule_summary=valid_payload()["rule_statement"],
-            examples=["旧证据"],
-            risks=[],
-            adaptation_notes="旧说明",
-            status="approved",
-        )
+        existing = make_duplicate_rule("approved", rule_id="rule-existing")
 
         with self.assertRaisesRegex(MechanismRuleProposalError, "已有相同"):
             propose_rule_from_mechanism(mechanism, profile, valid_payload(), [existing], [])
@@ -182,6 +186,38 @@ class MechanismRuleProposalTests(unittest.TestCase):
         result = propose_rule_from_mechanism(mechanism, profile, valid_payload(), [existing], [])
         self.assertTrue(result.created)
         self.assertIn("曾被废弃", result.user_summary)
+
+    def test_exact_duplicate_blocks_active_status_regardless_of_historical_order(self) -> None:
+        mechanism = make_mechanism()
+        profile = make_profile()
+        cases = [
+            ("rejected before approved", [make_duplicate_rule("rejected"), make_duplicate_rule("approved")]),
+            ("deprecated before testing", [make_duplicate_rule("deprecated"), make_duplicate_rule("testing")]),
+            ("rejected before validated", [make_duplicate_rule("rejected"), make_duplicate_rule("validated")]),
+            ("candidate before rejected", [make_duplicate_rule("candidate"), make_duplicate_rule("rejected")]),
+            ("approved before rejected", [make_duplicate_rule("approved"), make_duplicate_rule("rejected")]),
+        ]
+
+        for name, existing_rules in cases:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(MechanismRuleProposalError, "已有相同"):
+                    propose_rule_from_mechanism(mechanism, profile, valid_payload(), existing_rules, [])
+
+    def test_exact_duplicate_historical_only_allows_one_candidate_with_warning(self) -> None:
+        mechanism = make_mechanism()
+        profile = make_profile()
+        existing_rules = [
+            make_duplicate_rule("rejected", rule_id="rule-history-rejected"),
+            make_duplicate_rule("deprecated", rule_id="rule-history-deprecated"),
+        ]
+
+        result = propose_rule_from_mechanism(mechanism, profile, valid_payload(), existing_rules, [])
+
+        self.assertTrue(result.created)
+        self.assertEqual(result.rule.status, "candidate")
+        self.assertIn(result.duplicate_check["status"], {"rejected_history", "deprecated_history"})
+        self.assertEqual(len([result.rule]), 1)
+        self.assertIn("曾被", result.user_summary)
 
     def test_same_mechanism_profile_candidate_duplicate_blocks_even_without_decision(self) -> None:
         mechanism = make_mechanism()
@@ -257,10 +293,121 @@ class MechanismRuleProposalTests(unittest.TestCase):
         self.assertEqual(created, [result.rule.id, result.rule_evidence[0].id])
         self.assertEqual(deleted, [result.rule.id])
 
+    def test_persist_rolls_back_each_evidence_failure_position(self) -> None:
+        mechanism = make_mechanism()
+        payload = valid_payload(selected_observed_facts=mechanism.evidence_summary["observed_facts"])
+        result = propose_rule_from_mechanism(mechanism, make_profile(), payload, [], [])
+
+        for failure_position in [1, 2, 3]:
+            with self.subTest(failure_position=failure_position):
+                stores: dict[str, dict[str, object]] = {"rules": {}, "evidence": {}, "provenance": {}}
+                calls = {"evidence": 0}
+
+                def create_rule(item: RuleCard) -> RuleCard:
+                    stores["rules"][item.id] = item
+                    return item
+
+                def create_evidence(item: RuleEvidence) -> RuleEvidence:
+                    calls["evidence"] += 1
+                    if calls["evidence"] == failure_position:
+                        raise OSError(f"evidence {failure_position} failed")
+                    stores["evidence"][item.id] = item
+                    return item
+
+                with self.assertRaisesRegex(MechanismRuleProposalError, "已回滚"):
+                    persist_mechanism_rule_proposal(
+                        result,
+                        create_rule=create_rule,
+                        create_evidence=create_evidence,
+                        create_provenance=lambda item: stores["provenance"].setdefault(item.id, item),
+                        delete_rule=lambda record_id: stores["rules"].pop(record_id),
+                        delete_evidence=lambda record_id: stores["evidence"].pop(record_id),
+                        delete_provenance=lambda record_id: stores["provenance"].pop(record_id),
+                    )
+
+                self.assertEqual(stores, {"rules": {}, "evidence": {}, "provenance": {}})
+
+    def test_persist_rolls_back_each_provenance_failure_position(self) -> None:
+        mechanism = make_mechanism()
+        payload = valid_payload(selected_observed_facts=mechanism.evidence_summary["observed_facts"])
+        result = propose_rule_from_mechanism(mechanism, make_profile(), payload, [], [])
+
+        for failure_position in [1, 2]:
+            with self.subTest(failure_position=failure_position):
+                stores: dict[str, dict[str, object]] = {"rules": {}, "evidence": {}, "provenance": {}}
+                calls = {"provenance": 0}
+
+                def create_provenance(item: ProvenanceRecord) -> ProvenanceRecord:
+                    calls["provenance"] += 1
+                    if calls["provenance"] == failure_position:
+                        raise OSError(f"provenance {failure_position} failed")
+                    stores["provenance"][item.id] = item
+                    return item
+
+                with self.assertRaisesRegex(MechanismRuleProposalError, "已回滚"):
+                    persist_mechanism_rule_proposal(
+                        result,
+                        create_rule=lambda item: stores["rules"].setdefault(item.id, item),
+                        create_evidence=lambda item: stores["evidence"].setdefault(item.id, item),
+                        create_provenance=create_provenance,
+                        delete_rule=lambda record_id: stores["rules"].pop(record_id),
+                        delete_evidence=lambda record_id: stores["evidence"].pop(record_id),
+                        delete_provenance=lambda record_id: stores["provenance"].pop(record_id),
+                    )
+
+                self.assertEqual(stores, {"rules": {}, "evidence": {}, "provenance": {}})
+
+    def test_persist_rollback_preserves_existing_objects(self) -> None:
+        mechanism = make_mechanism()
+        payload = valid_payload(selected_observed_facts=mechanism.evidence_summary["observed_facts"])
+        result = propose_rule_from_mechanism(mechanism, make_profile(), payload, [], [])
+        existing_rule = make_duplicate_rule("rejected", rule_id="rule-existing")
+        existing_evidence = RuleEvidence(
+            id="evidence-existing",
+            rule_id=existing_rule.id,
+            source_type="benchmark_analysis",
+            source_id="analysis-existing",
+            source_fragment="title",
+            evidence_type="title",
+            observable_fact="已有事实",
+            inference="已有推断",
+        )
+        existing_provenance = ProvenanceRecord(
+            id="provenance-existing",
+            target_object_type="rule_card",
+            target_object_id=existing_rule.id,
+            source_object_type="benchmark_analysis",
+            source_object_id="analysis-existing",
+            source_version=1,
+            actor="codex",
+            artifact_nature="recommendation",
+            method="test",
+            note="已有来源",
+        )
+        stores: dict[str, dict[str, object]] = {
+            "rules": {existing_rule.id: existing_rule},
+            "evidence": {existing_evidence.id: existing_evidence},
+            "provenance": {existing_provenance.id: existing_provenance},
+        }
+        before = {collection: dict(records) for collection, records in stores.items()}
+
+        with self.assertRaisesRegex(MechanismRuleProposalError, "已回滚"):
+            persist_mechanism_rule_proposal(
+                result,
+                create_rule=lambda item: stores["rules"].setdefault(item.id, item),
+                create_evidence=lambda item: stores["evidence"].setdefault(item.id, item),
+                create_provenance=Mock(side_effect=OSError("provenance failed")),
+                delete_rule=lambda record_id: stores["rules"].pop(record_id),
+                delete_evidence=lambda record_id: stores["evidence"].pop(record_id),
+                delete_provenance=lambda record_id: stores["provenance"].pop(record_id),
+            )
+
+        self.assertEqual(stores, before)
+
     def test_rollback_failure_reports_inconsistency(self) -> None:
         result = propose_rule_from_mechanism(make_mechanism(), make_profile(), valid_payload(), [], [])
 
-        with self.assertRaisesRegex(MechanismRuleProposalError, "回滚失败"):
+        with self.assertRaisesRegex(MechanismRuleProposalError, "回滚失败") as context:
             persist_mechanism_rule_proposal(
                 result,
                 create_rule=lambda item: item,
@@ -270,6 +417,7 @@ class MechanismRuleProposalTests(unittest.TestCase):
                 delete_evidence=Mock(),
                 delete_provenance=Mock(),
             )
+        self.assertIsInstance(context.exception.__cause__, OSError)
 
     def test_mechanism_derived_candidate_rule_stays_out_of_generation_context(self) -> None:
         mechanism = make_mechanism()
