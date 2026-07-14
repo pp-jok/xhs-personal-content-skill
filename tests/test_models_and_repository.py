@@ -33,7 +33,7 @@ from app.models.core import (  # noqa: E402
     TopicItem,
     ValidationError,
 )
-from app.repositories import JsonRepository, NotFoundError  # noqa: E402
+from app.repositories import JsonRepository, NotFoundError, RepositoryVersionConflictError  # noqa: E402
 
 
 EXAMPLE_TO_MODEL = {
@@ -601,6 +601,29 @@ class ModelTests(unittest.TestCase):
         self.assertTrue(record.diagnostics["page_reachable"])
 
 
+def make_repository_asset(asset_id: str) -> ContentAsset:
+    return ContentAsset(
+        id=asset_id,
+        status="candidate",
+        asset_type="opening_template",
+        name="任务结果优先开场",
+        description="用于先呈现用户可完成的内容运营结果，再解释工具和过程。",
+        template="结果：{{result}}\n过程：{{process}}",
+        variables=["result", "process"],
+        applicable_scope=["AI 内容运营"],
+        exclusions=[],
+        usage_notes=[],
+        limitations=[],
+        examples=[],
+        creator_profile_id="creator-main",
+        source_mechanism_ids=["mechanism-result-framing"],
+        selected_observed_facts=["标题先展示结果承诺，再说明使用的工具和流程"],
+        account_fit_reason="提案中的账号适配理由。",
+        confidence_level="medium",
+        confidence=0.6,
+    )
+
+
 class JsonRepositoryTests(unittest.TestCase):
     def test_crud_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -654,6 +677,51 @@ class JsonRepositoryTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 repo.read("../topic-001")
+
+    def test_update_if_version_updates_only_when_expected_version_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = JsonRepository(Path(temp_dir), ContentAsset)
+            first = repo.create(make_repository_asset("asset-conditional"))
+            sibling = repo.create(make_repository_asset("asset-sibling"))
+
+            updated = repo.update_if_version(
+                first.id,
+                expected_version=1,
+                changes={"status": "active", "id": "malicious-id", "version": 99},
+                changed_by="user",
+                change_note="activate content asset",
+            )
+
+            self.assertEqual(updated.id, first.id)
+            self.assertEqual(updated.status, "active")
+            self.assertEqual(updated.version, 2)
+            self.assertEqual(repo.read(sibling.id).to_dict(), sibling.to_dict())
+
+            with self.assertRaises(RepositoryVersionConflictError):
+                repo.update_if_version(first.id, expected_version=1, changes={"status": "deprecated"})
+            with self.assertRaises(RepositoryVersionConflictError):
+                repo.update_if_version(first.id, expected_version=999, changes={"status": "deprecated"})
+            with self.assertRaises(NotFoundError):
+                repo.update_if_version("missing-asset", expected_version=1, changes={"status": "active"})
+
+            self.assertFalse((Path(temp_dir) / ContentAsset.collection_name / "missing-asset.json").exists())
+
+    def test_update_if_version_does_not_call_update_fn_on_version_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = JsonRepository(Path(temp_dir), ContentAsset)
+            asset = repo.create(make_repository_asset("asset-callback"))
+            called = False
+
+            def update_fn(data: dict[str, object]) -> dict[str, object]:
+                nonlocal called
+                called = True
+                return {**data, "status": "active"}
+
+            with self.assertRaises(RepositoryVersionConflictError):
+                repo.update_if_version(asset.id, expected_version=2, update_fn=update_fn)
+
+            self.assertFalse(called)
+            self.assertEqual(repo.read(asset.id).to_dict(), asset.to_dict())
 
 
 if __name__ == "__main__":

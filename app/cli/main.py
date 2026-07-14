@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from app.analysis import analyze_capture, assess_account_fit, build_account_fit_summary, build_analysis_outcome
+from app.assets import activate_content_asset, deprecate_content_asset
 from app.capture import build_browser_capture_record, build_capture_record
 from app.capture.browser.cdp_client import DEFAULT_CDP_URL, capture_xhs_link_with_browser
 from app.capture.capture_errors import CaptureInputError
@@ -353,6 +354,26 @@ def build_parser() -> argparse.ArgumentParser:
     mechanism_asset_parser.add_argument("--creator-id", required=True, help="CreatorProfile id.")
     mechanism_asset_parser.add_argument("--file", required=True, help="Structured mechanism asset proposal JSON file.")
     mechanism_asset_parser.set_defaults(handler=handle_propose_asset_from_mechanism)
+
+    activate_asset_parser = subparsers.add_parser(
+        "activate-content-asset",
+        help="Activate one candidate content asset with an optimistic version check.",
+    )
+    activate_asset_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    activate_asset_parser.add_argument("--asset-id", required=True, help="ContentAsset id.")
+    activate_asset_parser.add_argument("--expected-version", required=True, type=int, help="Expected current ContentAsset version.")
+    activate_asset_parser.add_argument("--actor", required=True, help="Actor applying the lifecycle change.")
+    activate_asset_parser.set_defaults(handler=handle_activate_content_asset)
+
+    deprecate_asset_parser = subparsers.add_parser(
+        "deprecate-content-asset",
+        help="Deprecate one candidate or active content asset with an optimistic version check.",
+    )
+    deprecate_asset_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    deprecate_asset_parser.add_argument("--asset-id", required=True, help="ContentAsset id.")
+    deprecate_asset_parser.add_argument("--expected-version", required=True, type=int, help="Expected current ContentAsset version.")
+    deprecate_asset_parser.add_argument("--actor", required=True, help="Actor applying the lifecycle change.")
+    deprecate_asset_parser.set_defaults(handler=handle_deprecate_content_asset)
 
     promote_parser = subparsers.add_parser("promote-to-benchmark", help="Promote one analyzed inbox item to benchmark account and post records.")
     promote_parser.add_argument("--workspace", required=True, help="Workspace directory.")
@@ -1097,6 +1118,51 @@ def handle_propose_asset_from_mechanism(args: argparse.Namespace) -> dict[str, A
         "user_summary": persisted.user_summary,
         "machine_summary": persisted.machine_summary,
     }
+
+
+def handle_activate_content_asset(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    require_existing_workspace(workspace)
+    result = activate_content_asset(
+        JsonRepository(workspace, ContentAsset),
+        asset_id=args.asset_id,
+        expected_version=args.expected_version,
+        actor=args.actor,
+    )
+    return {
+        "asset_id": result.asset.id,
+        "previous_status": result.previous_status,
+        "new_status": result.new_status,
+        "previous_version": result.previous_version,
+        "new_version": result.new_version,
+        "user_summary": result.user_summary,
+        "machine_summary": result.machine_summary,
+    }
+
+
+def handle_deprecate_content_asset(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    require_existing_workspace(workspace)
+    result = deprecate_content_asset(
+        JsonRepository(workspace, ContentAsset),
+        asset_id=args.asset_id,
+        expected_version=args.expected_version,
+        actor=args.actor,
+    )
+    return {
+        "asset_id": result.asset.id,
+        "previous_status": result.previous_status,
+        "new_status": result.new_status,
+        "previous_version": result.previous_version,
+        "new_version": result.new_version,
+        "user_summary": result.user_summary,
+        "machine_summary": result.machine_summary,
+    }
+
+
+def require_existing_workspace(workspace: Path) -> None:
+    if not workspace.exists() or not workspace.is_dir():
+        raise ValueError("工作区不存在或不可用，请先初始化或选择已有工作区。")
 
 
 def handle_promote_to_benchmark(args: argparse.Namespace) -> dict[str, Any]:
