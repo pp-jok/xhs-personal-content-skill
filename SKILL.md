@@ -147,7 +147,15 @@ When the user explicitly asks to turn a saved mechanism into a reusable content 
 2. Use a structured asset proposal prepared from the user's/Codex's current reasoning.
 3. Create only a candidate content asset, content asset evidence from selected observed facts, and provenance.
 4. Do not create a decision automatically.
-5. Tell the user the asset is not active, not connected to generation, and there is currently no asset activation command in this stage.
+5. Tell the user the asset is not active and not connected to generation. If the user explicitly wants to make it available for future controlled reference, use the asset lifecycle command.
+
+Asset lifecycle flow:
+
+1. Activate only a candidate content asset with an explicit expected version.
+2. Deprecate only a candidate or active content asset with an explicit expected version.
+3. Treat repeated same-state operations, stale versions, missing assets, and deprecated-to-active attempts as failures.
+4. Explain that activation changes only the asset governance status; it still does not automatically enter GenerationContext or affect topic/draft generation.
+5. Do not create DecisionRequest, provenance, rules, topics, drafts, or template-rendered content during asset lifecycle operations.
 
 Asset templates must contain at least one declared `{{variable_name}}` placeholder; this stage does not accept completely fixed no-variable templates or `variables=[]`.
 

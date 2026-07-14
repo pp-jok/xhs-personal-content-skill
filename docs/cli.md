@@ -166,11 +166,41 @@ python3 -m app.cli propose-asset-from-mechanism \
 - 1-3 条内容资产证据
 - 内容机制和账号档案到候选内容资产的来源记录
 
-它不会创建用户决策，不会自动激活资产，不会修改内容机制或账号档案，不会创建规则、选题、草稿、发布任务或媒体素材。创建成功后，资产仍未进入内容生成；当前也没有资产激活命令或资产决策命令。PR-5D 才会处理显式引用和受控接入。
+它不会创建用户决策，不会自动激活资产，不会修改内容机制或账号档案，不会创建规则、选题、草稿、发布任务或媒体素材。创建成功后，资产仍未进入内容生成；需要用户显式执行资产生命周期命令后，才会变为已激活资产。PR-5D 才会处理显式引用和受控接入。
 
 证据只能来自机制中的 `observed_facts`。不能把推断、用户偏好、缺失信息、限制、使用说明或账号适配理由当作资产证据。`candidate` 和 `active` 机制都可以作为来源，但 `deprecated` 机制会被拒绝。
 
 第一版不支持图片、视频、音频、二进制附件、远程 URL 资产、外部抓取、OCR、视频解析、媒体生成、完整文章成稿、固定发布文案或批量资产导入。近义模板、语义相似和冲突仍需人工判断；本地服务不调用模型、不做 embeddings、不做中文分词。
+
+## 内容资产生命周期
+
+PR-5C.1 增加两个显式生命周期命令，用于把候选资产变为已激活资产，或把候选/已激活资产废弃。
+
+```bash
+python3 -m app.cli activate-content-asset \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --asset-id asset-opening-template \
+  --expected-version 1 \
+  --actor user
+```
+
+```bash
+python3 -m app.cli deprecate-content-asset \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --asset-id asset-opening-template \
+  --expected-version 2 \
+  --actor user
+```
+
+合法状态转换只有：
+
+- `candidate` → `active`
+- `candidate` → `deprecated`
+- `active` → `deprecated`
+
+两个命令都必须提供 `--expected-version`。如果本地资产版本已经变化，命令会失败且不写入，避免把过期判断误应用到新版本资产。
+
+激活只改变内容资产的治理状态，不会自动把资产加入 GenerationContext，不会自动影响 `generate-topics`、`generate-draft` 或 `revise-draft`，也不会创建 `DecisionRequest`、来源记录、规则、选题或草稿。废弃会保留历史记录，但废弃资产不能用于后续显式生成引用。
 
 ## 列出记录
 

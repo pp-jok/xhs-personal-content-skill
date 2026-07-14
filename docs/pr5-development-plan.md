@@ -827,6 +827,81 @@ ContentAsset 不自动发布。
 
 ---
 
+## 6A. PR-5C.1：ContentAsset Lifecycle
+
+### 6A.1 目标
+
+在 PR-5C 和 PR-5D 之间增加最小资产生命周期：
+
+```text
+ContentAsset(candidate)
+→ 用户显式激活
+→ ContentAsset(active)
+
+ContentAsset(candidate 或 active)
+→ 用户显式废弃
+→ ContentAsset(deprecated)
+```
+
+PR-5C.1 只改变资产治理状态，不接入生成链路。
+
+### 6A.2 状态转换
+
+合法转换：
+
+```text
+candidate → active
+candidate → deprecated
+active → deprecated
+```
+
+禁止重复同状态操作、反向转换、deprecated 重新激活，以及任何通用 `set status` 入口。
+
+### 6A.3 CLI
+
+新增：
+
+```bash
+python3 -m app.cli activate-content-asset \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --asset-id asset-xxxx \
+  --expected-version 1 \
+  --actor user
+```
+
+```bash
+python3 -m app.cli deprecate-content-asset \
+  --workspace .xhs-personal-content-skill/real-sample \
+  --asset-id asset-xxxx \
+  --expected-version 2 \
+  --actor user
+```
+
+两个命令都必须使用 optimistic version check。版本不匹配时失败且零写入。
+
+### 6A.4 PR-5C.1 不做事项
+
+```text
+不连接 GenerationContext。
+不影响 generate-topics。
+不影响 generate-draft。
+不影响 revise-draft。
+不消费模板变量。
+不创建 DecisionRequest。
+不创建 ProvenanceRecord。
+不修改 ContentAssetEvidence。
+不修改 ContentMechanism。
+不修改 RuleCard。
+不做自动资产选择。
+不做批量生命周期操作。
+```
+
+### 6A.5 与 PR-5D 的关系
+
+PR-5D 只能显式引用 active ContentAsset。candidate asset 不进入生成；deprecated asset 不允许作为后续显式生成引用。
+
+---
+
 ## 7. 暂缓阶段
 
 ### 7.1 PR-5D：Controlled Context

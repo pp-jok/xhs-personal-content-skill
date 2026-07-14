@@ -3234,6 +3234,166 @@ class CliTests(unittest.TestCase):
             self.assertIn("已有相同", duplicate["error"])
             self.assertEqual(self._snapshot_workspace(workspace), after_first)
 
+    def test_content_asset_lifecycle_cli_activates_and_deprecates_with_safe_summaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            candidate = ContentAsset(
+                id="asset-cli-candidate",
+                status="candidate",
+                asset_type="opening_template",
+                name="任务结果优先开场",
+                description="用于先呈现用户可完成的内容运营结果，再解释工具和过程。",
+                template="结果：{{result}}\n过程：{{process}}",
+                variables=["result", "process"],
+                applicable_scope=["AI 内容运营"],
+                exclusions=[],
+                usage_notes=[],
+                limitations=[],
+                examples=[],
+                creator_profile_id="creator-main",
+                source_mechanism_ids=["mechanism-result-framing"],
+                selected_observed_facts=["标题先展示结果承诺，再说明使用的工具和流程"],
+                account_fit_reason="提案中的账号适配理由。",
+                confidence_level="medium",
+                confidence=0.6,
+            )
+            active = ContentAsset.from_dict({**candidate.to_dict(), "id": "asset-cli-active", "status": "active"})
+            JsonRepository(workspace, ContentAsset).create(candidate)
+            JsonRepository(workspace, ContentAsset).create(active)
+
+            activated = self._run_cli(
+                [
+                    "activate-content-asset",
+                    "--workspace",
+                    temp_dir,
+                    "--asset-id",
+                    candidate.id,
+                    "--expected-version",
+                    "1",
+                    "--actor",
+                    "user",
+                ]
+            )
+            deprecated = self._run_cli(
+                [
+                    "deprecate-content-asset",
+                    "--workspace",
+                    temp_dir,
+                    "--asset-id",
+                    active.id,
+                    "--expected-version",
+                    "1",
+                    "--actor",
+                    "user",
+                ]
+            )
+
+            self.assertTrue(activated["ok"])
+            self.assertTrue(deprecated["ok"])
+            self.assertEqual(JsonRepository(workspace, ContentAsset).read(candidate.id).status, "active")
+            self.assertEqual(JsonRepository(workspace, ContentAsset).read(active.id).status, "deprecated")
+            self.assertEqual(activated["result"]["machine_summary"]["operation"], "activate")
+            self.assertEqual(deprecated["result"]["machine_summary"]["operation"], "deprecate")
+            self.assertFalse(activated["result"]["machine_summary"]["generation_context_connected"])
+            self.assertFalse(deprecated["result"]["machine_summary"]["decision_request_created"])
+            for summary in (activated["result"]["user_summary"], deprecated["result"]["user_summary"]):
+                for forbidden in (
+                    candidate.id,
+                    active.id,
+                    "ContentAsset",
+                    "content-assets",
+                    "candidate",
+                    "active",
+                    "deprecated",
+                    "GenerationContext",
+                    ".json",
+                    temp_dir,
+                ):
+                    self.assertNotIn(forbidden, summary)
+            self.assertEqual(JsonRepository(workspace, DecisionRequest).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, ProvenanceRecord).list_all(), [])
+            self.assertEqual(JsonRepository(workspace, ContentAssetEvidence).list_all(), [])
+
+    def test_content_asset_lifecycle_cli_failures_are_safe_and_zero_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            asset = ContentAsset(
+                id="asset-cli-failure",
+                status="candidate",
+                asset_type="opening_template",
+                name="任务结果优先开场",
+                description="用于先呈现用户可完成的内容运营结果，再解释工具和过程。",
+                template="结果：{{result}}\n过程：{{process}}",
+                variables=["result", "process"],
+                applicable_scope=["AI 内容运营"],
+                exclusions=[],
+                usage_notes=[],
+                limitations=[],
+                examples=[],
+                creator_profile_id="creator-main",
+                source_mechanism_ids=["mechanism-result-framing"],
+                selected_observed_facts=["标题先展示结果承诺，再说明使用的工具和流程"],
+                account_fit_reason="提案中的账号适配理由。",
+                confidence_level="medium",
+                confidence=0.6,
+            )
+            JsonRepository(workspace, ContentAsset).create(asset)
+            before = self._snapshot_workspace(workspace)
+
+            stale = self._run_cli(
+                [
+                    "activate-content-asset",
+                    "--workspace",
+                    temp_dir,
+                    "--asset-id",
+                    asset.id,
+                    "--expected-version",
+                    "2",
+                    "--actor",
+                    "user",
+                ],
+                expected_code=1,
+            )
+            missing = self._run_cli(
+                [
+                    "deprecate-content-asset",
+                    "--workspace",
+                    temp_dir,
+                    "--asset-id",
+                    "missing-asset",
+                    "--expected-version",
+                    "1",
+                    "--actor",
+                    "user",
+                ],
+                expected_code=1,
+            )
+            illegal = self._run_cli(
+                [
+                    "deprecate-content-asset",
+                    "--workspace",
+                    temp_dir,
+                    "--asset-id",
+                    asset.id,
+                    "--expected-version",
+                    "0",
+                    "--actor",
+                    "user",
+                ],
+                expected_code=1,
+            )
+
+            self.assertIn("版本冲突", stale["error"])
+            self.assertIn("内容资产不存在", missing["error"])
+            self.assertIn("输入参数无效", illegal["error"])
+            for output in (stale, missing, illegal):
+                self.assertFalse(output["ok"])
+                self.assertNotIn("Traceback", output["error"])
+                self.assertNotIn("ContentAsset", output["error"])
+                self.assertNotIn("content-assets", output["error"])
+                self.assertNotIn(temp_dir, output["error"])
+            self.assertEqual(self._snapshot_workspace(workspace), before)
+
     def test_propose_rule_from_mechanism_missing_records_write_no_business_objects(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
