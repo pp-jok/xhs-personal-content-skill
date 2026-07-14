@@ -1,0 +1,28 @@
+{
+  "rule_statement": "讲 AI 工具时，优先表达用户能够完成的内容运营任务，而不是先堆叠工具功能。",
+  "rule_type": "topic",
+  "applicable_scope": [
+    "AI 内容运营",
+    "工作流内容"
+  ],
+  "exclusions": [
+    "纯开发者技术教程",
+    "软件安装说明"
+  ],
+  "selected_observed_facts": [
+    "标题包含 Codex、Obsidian、10min 和爆款工作流",
+    "封面展示工具图标、流程图和结果承诺"
+  ],
+  "account_fit_reason": "当前账号定位强调 AI 内容运营判断，而不是单纯工具教学。",
+  "limitations": [
+    "不能夸大时间承诺",
+    "需要展示可见过程证据"
+  ],
+  "risk_notes": [
+    "单个机制来源，仍需更多样本验证"
+  ],
+  "examples": [
+    "先讲内容运营任务，再解释工具组合"
+  ],
+  "confidence_level": "medium"
+}

@@ -169,6 +169,59 @@ class ModelTests(unittest.TestCase):
                 note="actor and nature cannot be collapsed.",
             )
 
+    def test_content_mechanism_can_source_rule_evidence_and_provenance_without_breaking_old_json(self) -> None:
+        old_evidence = RuleEvidence(
+            id="evidence-old",
+            rule_id="rule-old",
+            source_type="benchmark_analysis",
+            source_id="analysis-old",
+            source_fragment="标题",
+            evidence_type="title",
+            observable_fact="标题包含明确结果",
+            inference="该事实支持标题规则。",
+        )
+        old_provenance = ProvenanceRecord(
+            id="provenance-old",
+            target_object_type="rule_card",
+            target_object_id="rule-old",
+            source_object_type="benchmark_analysis",
+            source_object_id="analysis-old",
+            source_version=1,
+            actor="codex",
+            artifact_nature="recommendation",
+            method="propose-candidate-rules",
+            note="旧来源记录。",
+        )
+
+        self.assertEqual(RuleEvidence.from_dict(old_evidence.to_dict()).source_type, "benchmark_analysis")
+        self.assertEqual(ProvenanceRecord.from_dict(old_provenance.to_dict()).source_object_type, "benchmark_analysis")
+
+        evidence = RuleEvidence(
+            id="evidence-mechanism",
+            rule_id="rule-mechanism",
+            source_type="content_mechanism",
+            source_id="mechanism-001",
+            source_fragment="evidence_summary.observed_facts[0]",
+            evidence_type="content_mechanism",
+            observable_fact="标题先讲用户能完成的任务",
+            inference="该机制事实支持候选规则。",
+        )
+        provenance = ProvenanceRecord(
+            id="provenance-mechanism",
+            target_object_type="rule_card",
+            target_object_id="rule-mechanism",
+            source_object_type="content_mechanism",
+            source_object_id="mechanism-001",
+            source_version=1,
+            actor="codex",
+            artifact_nature="recommendation",
+            method="propose-rule-from-mechanism",
+            note="候选规则来自内容机制。",
+        )
+
+        self.assertEqual(evidence.source_type, "content_mechanism")
+        self.assertEqual(provenance.source_object_type, "content_mechanism")
+
     def test_decision_request_status_and_selected_option_are_validated(self) -> None:
         decision = DecisionRequest(
             id="decision-001",

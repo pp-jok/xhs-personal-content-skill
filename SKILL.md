@@ -131,6 +131,16 @@ Only save a candidate mechanism when there is at least one observable fact. If t
 
 Candidate mechanisms do not enter GenerationContext and must not affect topic generation, draft generation, focused revision, publishing tasks, or active rule selection. Converting a mechanism into a candidate rule or content asset is deferred to later explicit workflows.
 
+When the user explicitly asks to turn a saved mechanism into an account rule, use the controlled mechanism-to-rule flow:
+
+1. Read only the selected `ContentMechanism`, selected `CreatorProfile`, existing rules, and provenance needed for duplicate checks.
+2. Use a structured proposal prepared from the user's/Codex's current reasoning.
+3. Create only a candidate rule, rule evidence from selected observed facts, and provenance.
+4. Do not create a decision automatically.
+5. Tell the user the rule is not active and the next step is to confirm or reject it through the existing candidate-rule decision flow.
+
+Never use mechanism inferences, user preferences, missing information, or account-fit wording as rule evidence. Never turn a deprecated mechanism into a rule. Never imply a mechanism-derived candidate rule affects generation before user confirmation.
+
 ### 4. Generate Topics, Drafts, And Focused Revisions
 
 Formal generation uses only active rules: `approved`, `testing`, and `validated`. Never use `candidate`, `rejected`, or `deprecated` rules in formal generation unless a future explicit experiment mode exists.

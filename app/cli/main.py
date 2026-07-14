@@ -27,7 +27,12 @@ from app.generation import (
     generate_topics_from_context,
     revise_draft_with_focus,
 )
-from app.mechanisms import import_mechanism_candidate
+from app.mechanisms import (
+    MechanismRuleProposalError,
+    import_mechanism_candidate,
+    persist_mechanism_rule_proposal,
+    propose_rule_from_mechanism,
+)
 from app.models.core import (
     MODEL_TYPES,
     Actor,
@@ -80,6 +85,7 @@ OBJECT_TYPE_TO_MODEL: dict[str, type[BaseModel]] = {
     "content_inbox": ContentInboxItem,
     "capture_record": CaptureRecord,
     "benchmark_analysis": BenchmarkAnalysis,
+    "content_mechanism": ContentMechanism,
     "custom_tag": CustomTag,
     "rule_card": RuleCard,
     "rule_evidence": RuleEvidence,
@@ -320,6 +326,16 @@ def build_parser() -> argparse.ArgumentParser:
     proposal_parser.add_argument("--creator-id", required=True, help="CreatorProfile used for saved account fit.")
     proposal_parser.add_argument("--proposals-file", required=True, help="Structured candidate proposal JSON file.")
     proposal_parser.set_defaults(handler=handle_propose_candidate_rules)
+
+    mechanism_rule_parser = subparsers.add_parser(
+        "propose-rule-from-mechanism",
+        help="Validate and save one candidate rule from one content mechanism proposal.",
+    )
+    mechanism_rule_parser.add_argument("--workspace", required=True, help="Workspace directory.")
+    mechanism_rule_parser.add_argument("--mechanism-id", required=True, help="ContentMechanism id.")
+    mechanism_rule_parser.add_argument("--creator-id", required=True, help="CreatorProfile id.")
+    mechanism_rule_parser.add_argument("--file", required=True, help="Structured mechanism rule proposal JSON file.")
+    mechanism_rule_parser.set_defaults(handler=handle_propose_rule_from_mechanism)
 
     promote_parser = subparsers.add_parser("promote-to-benchmark", help="Promote one analyzed inbox item to benchmark account and post records.")
     promote_parser.add_argument("--workspace", required=True, help="Workspace directory.")
@@ -981,6 +997,47 @@ def handle_propose_candidate_rules(args: argparse.Namespace) -> dict[str, Any]:
         "created_count": len(result["created_rules"]),
         "duplicate_count": sum(item["outcome"] == "duplicate" for item in proposal_results),
         "rejected_count": sum(item["outcome"] == "rejected" for item in proposal_results),
+    }
+
+
+def handle_propose_rule_from_mechanism(args: argparse.Namespace) -> dict[str, Any]:
+    workspace = Path(args.workspace)
+    try:
+        payload = read_json_object(Path(args.file), "mechanism rule proposal")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise MechanismRuleProposalError("无法读取结构化机制规则提案，请检查文件后重试。") from exc
+    if not isinstance(payload, dict):
+        raise MechanismRuleProposalError("结构化机制规则提案必须是一个 JSON object。")
+    try:
+        mechanism = JsonRepository(workspace, ContentMechanism).read(args.mechanism_id)
+        profile = JsonRepository(workspace, CreatorProfile).read(args.creator_id)
+    except FileNotFoundError as exc:
+        raise MechanismRuleProposalError("未找到指定内容机制或账号档案，暂不能创建候选规则。") from exc
+
+    result = propose_rule_from_mechanism(
+        mechanism=mechanism,
+        profile=profile,
+        proposal_payload=payload,
+        existing_rules=JsonRepository(workspace, RuleCard).list_all(),
+        existing_provenance=JsonRepository(workspace, ProvenanceRecord).list_all(),
+    )
+
+    rule_repo = JsonRepository(workspace, RuleCard)
+    evidence_repo = JsonRepository(workspace, RuleEvidence)
+    provenance_repo = JsonRepository(workspace, ProvenanceRecord)
+    persisted = persist_mechanism_rule_proposal(
+        result,
+        create_rule=rule_repo.create,
+        create_evidence=evidence_repo.create,
+        create_provenance=provenance_repo.create,
+        delete_rule=rule_repo.delete,
+        delete_evidence=evidence_repo.delete,
+        delete_provenance=provenance_repo.delete,
+    )
+    return {
+        "created_count": 1 if persisted.created else 0,
+        "user_summary": persisted.user_summary,
+        "machine_summary": persisted.machine_summary,
     }
 
 
