@@ -495,7 +495,9 @@ python3 -m app.cli generate-topics \
   --tone "直接、具体" \
   --do "给出可执行步骤" \
   --dont "夸大效果" \
-  --reference-id benchmark-post-001
+  --reference-id benchmark-post-001 \
+  --asset-id asset-opening-template \
+  --asset-version 2
 ```
 
 `generate-topics` 会先构建非持久化 GenerationContext，再基于可用规则生成 `TopicItem`。它只创建选题，不创建 `ContentDraft`，不创建 `PublishTask`，不调用真实 LLM，也不会自动批准候选规则。
@@ -505,6 +507,8 @@ python3 -m app.cli generate-topics \
 正式选题只使用 `approved`、`testing`、`validated` 规则。`candidate`、`rejected`、`deprecated` 不进入选题。没有可用规则时不会生成正式选题，需要先确认至少一条规则。
 
 当上下文为 limited 但仍有可用规则时，命令会生成选题并在 `warnings` 与 `user_summary` 中说明限制，例如缺少独立证据、账号档案来源不可验证或来源版本不一致。
+
+PR-5D 支持通过 `--asset-id` 显式引用 1 个已激活内容资产。可选 `--asset-version` 用于防止过期引用；如果当前资产版本不匹配，命令会失败且不写入选题。资产必须属于本次 `--profile-id` 指定的账号档案。该资产会作为 `reference_assets` 快照进入 GenerationContext 和生成出的 `TopicItem`，记录资产 ID、版本、类型、模板、适用范围、限制和所选可观察事实。命令不会自动扫描所有 active 资产，不会引用 candidate 或 deprecated 资产，不会执行 `{{variable_name}}` 模板替换，也不会修改内容资产状态。
 
 JSON repository 没有数据库事务。命令会先构造并校验全部 `TopicItem`，再写入；如果写入阶段失败，系统会返回明确错误，但不会声称写入具有事务原子性。
 
@@ -806,22 +810,28 @@ python3 -m app.cli generate-topics \
   --content-type "图文" \
   --topic-area "新人入职" \
   --target-audience "刚入职的新人" \
-  --format "清单"
+  --format "清单" \
+  --asset-id asset-opening-template \
+  --asset-version 2
 ```
 
 该命令基于中央生成上下文创建结构化选题记录。旧 `--creator-id` 仍可作为 `--profile-id` 的兼容别名；旧 `--benchmark-post-id` 只作为参考来源，不再自动生成规则。
+
+`--asset-id` 可选且一次只支持 1 个 active 内容资产。`--asset-version` 可选；提供时必须与当前资产版本一致。生成结果只保存引用快照，不渲染模板，不自动选择资产。
 
 ## 生成草稿
 
 ```bash
 python3 -m app.cli generate-draft \
   --workspace .xhs-personal-content-skill/real-sample \
-  --topic-id <topic-id>
+  --topic-id <topic-id> \
+  --asset-id asset-opening-template \
+  --asset-version 2
 ```
 
 该命令基于一个已选 `TopicItem` 生成一个 `ContentDraft`。它会保留选题中的账号档案版本、来源规则、任务约束、上下文状态、风险和缺失信息，并返回简短诊断。
 
-`generate-draft` 一次只生成 1 个草稿，不创建 `PublishTask`，不发布，不调用真实 LLM，不修改 `TopicItem`、`RuleCard`、`DecisionRequest` 或 `RuleEvidence`。
+如果没有指定 `--asset-id`，草稿默认继承 `TopicItem.reference_assets`。如果显式指定，命令只接受 1 个 active 内容资产，并把它保存为草稿的引用快照；提供 `--asset-version` 时必须与当前资产版本一致，资产也必须属于选题记录中的账号档案。如果选题已经带有资产引用，显式传入同一资产和版本可以继续生成；显式传入不同资产或不同版本会失败，避免静默覆盖审计链。`generate-draft` 不做模板变量替换，不创建 `PublishTask`，不发布，不调用真实 LLM，不修改 `TopicItem`、`RuleCard`、`DecisionRequest`、`RuleEvidence` 或 `ContentAsset`。
 
 ## 聚焦修订草稿
 

@@ -23,6 +23,7 @@ from app.decisions import (
 )
 from app.generation import (
     GenerationTaskConstraints,
+    asset_reference_snapshot,
     build_generation_context,
     generate_draft_from_topic,
     generate_topics_from_context,
@@ -451,11 +452,15 @@ def build_parser() -> argparse.ArgumentParser:
     topics_parser.add_argument("--do", action="append", default=[], help="Required action, repeatable.")
     topics_parser.add_argument("--dont", action="append", default=[], help="Avoidance constraint, repeatable.")
     topics_parser.add_argument("--reference-id", action="append", default=[], help="Reference id, repeatable.")
+    topics_parser.add_argument("--asset-id", help="Explicit active ContentAsset id to reference; supports one asset.")
+    topics_parser.add_argument("--asset-version", type=int, help="Expected ContentAsset version for explicit reference.")
     topics_parser.set_defaults(handler=handle_generate_topics)
 
     draft_parser = subparsers.add_parser("generate-draft", help="Generate a local mock draft for one topic.")
     draft_parser.add_argument("--workspace", required=True, help="Workspace directory.")
     draft_parser.add_argument("--topic-id", required=True, help="TopicItem id.")
+    draft_parser.add_argument("--asset-id", help="Explicit active ContentAsset id to reference; supports one asset.")
+    draft_parser.add_argument("--asset-version", type=int, help="Expected ContentAsset version for explicit reference.")
     draft_parser.set_defaults(handler=handle_generate_draft)
 
     revise_parser = subparsers.add_parser("revise-draft", help="Create one focused revised ContentDraft.")
@@ -1390,6 +1395,12 @@ def handle_generate_topics(args: argparse.Namespace) -> dict[str, Any]:
     ensure_workspace_dirs(workspace)
     profile_id = resolve_generation_profile_id(args.profile_id, args.creator_id)
     profile = JsonRepository(workspace, CreatorProfile).read(profile_id)
+    reference_assets = read_explicit_reference_assets(
+        workspace,
+        args.asset_id,
+        args.asset_version,
+        expected_profile_id=profile.id,
+    )
     reference_ids = list(args.reference_id)
     if args.benchmark_post_id:
         reference_ids.append(args.benchmark_post_id)
@@ -1412,6 +1423,7 @@ def handle_generate_topics(args: argparse.Namespace) -> dict[str, Any]:
         provenance=JsonRepository(workspace, ProvenanceRecord).list_all(),
         decisions=JsonRepository(workspace, DecisionRequest).list_all(),
         task_constraints=constraints,
+        reference_assets=reference_assets,
     )
     result = generate_topics_from_context(context=context, topic_count=args.topic_count)
     topic_repo = JsonRepository(workspace, TopicItem)
@@ -1443,7 +1455,19 @@ def handle_generate_draft(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace)
     ensure_workspace_dirs(workspace)
     topic = JsonRepository(workspace, TopicItem).read(args.topic_id)
-    result = generate_draft_from_topic(topic=topic)
+    reference_assets = [
+        asset_reference_snapshot(asset)
+        for asset in read_explicit_reference_assets(
+            workspace,
+            args.asset_id,
+            args.asset_version,
+            expected_profile_id=topic.source_profile_id,
+        )
+    ]
+    result = generate_draft_from_topic(
+        topic=topic,
+        reference_assets=reference_assets if reference_assets else None,
+    )
     saved = JsonRepository(workspace, ContentDraft).upsert(
         result.draft,
         changed_by="codex",
@@ -1458,6 +1482,31 @@ def handle_generate_draft(args: argparse.Namespace) -> dict[str, Any]:
         "user_summary": result.user_summary,
         "machine_summary": machine_summary,
     }
+
+
+def read_explicit_reference_assets(
+    workspace: Path,
+    asset_id: str | None,
+    expected_version: int | None,
+    *,
+    expected_profile_id: str,
+) -> list[ContentAsset]:
+    cleaned = asset_id.strip() if isinstance(asset_id, str) else ""
+    if not cleaned:
+        if expected_version is not None:
+            raise ValueError("提供 --asset-version 时必须同时提供 --asset-id。")
+        return []
+    if expected_version is not None and expected_version < 1:
+        raise ValueError("内容资产版本必须是大于等于 1 的整数。")
+    asset = JsonRepository(workspace, ContentAsset).read(cleaned)
+    if asset.status != "active":
+        raise ValueError("只有 active 内容资产可以被显式引用进入生成。")
+    if asset.creator_profile_id != expected_profile_id:
+        raise ValueError("内容资产所属账号与本次生成账号不一致。")
+    if expected_version is not None and asset.version != expected_version:
+        raise ValueError("内容资产版本已变化，请重新查看后再生成。")
+    asset.validate()
+    return [asset]
 
 
 def handle_revise_draft(args: argparse.Namespace) -> dict[str, Any]:

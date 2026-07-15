@@ -175,6 +175,37 @@ def ensure_non_empty_unique_texts(value: list[Any], field_name: str, require_one
         raise ValidationError(f"{field_name} must contain at least one item")
 
 
+def validate_generation_asset_references(value: list[Any], field_name: str) -> None:
+    require_list(value, field_name)
+    if len(value) > 1:
+        raise ValidationError(f"{field_name} must contain at most one item")
+    for index, item in enumerate(value):
+        item_name = f"{field_name}[{index}]"
+        require_dict(item, item_name)
+        require_text(item.get("asset_id"), f"{item_name}.asset_id")
+        ensure_non_negative_int(item.get("asset_version"), f"{item_name}.asset_version")
+        if item["asset_version"] < 1:
+            raise ValidationError(f"{item_name}.asset_version must be at least 1")
+        require_literal(item.get("asset_type"), ContentAssetType, f"{item_name}.asset_type")
+        require_text(item.get("name"), f"{item_name}.name")
+        require_text(item.get("template"), f"{item_name}.template")
+        ensure_list_items_are_text(item.get("variables"), f"{item_name}.variables")
+        ensure_list_items_are_text(item.get("applicable_scope"), f"{item_name}.applicable_scope")
+        if "scope" in item:
+            ensure_list_items_are_text(item["scope"], f"{item_name}.scope")
+            if item["scope"] != item["applicable_scope"]:
+                raise ValidationError(f"{item_name} scope aliases must match")
+        ensure_list_items_are_text(item.get("limitations"), f"{item_name}.limitations")
+        ensure_list_items_are_text(item.get("selected_observed_facts"), f"{item_name}.selected_observed_facts")
+        if "evidence_facts" in item:
+            ensure_list_items_are_text(item["evidence_facts"], f"{item_name}.evidence_facts")
+            if item["evidence_facts"] != item["selected_observed_facts"]:
+                raise ValidationError(f"{item_name} evidence aliases must match")
+        ensure_list_items_are_text(item.get("source_mechanism_ids"), f"{item_name}.source_mechanism_ids")
+        if "confidence_level" in item:
+            require_literal(item["confidence_level"], ContentMechanismConfidenceLevel, f"{item_name}.confidence_level")
+
+
 def ensure_variable_names(value: list[str]) -> None:
     for item in value:
         if not VARIABLE_NAME_RE.match(item):
@@ -889,6 +920,7 @@ class TopicItem(BaseModel):
     task_constraints: dict[str, Any] = field(default_factory=dict)
     risk_warnings: list[str] = field(default_factory=list)
     missing_information: list[str] = field(default_factory=list)
+    reference_assets: list[dict[str, Any]] = field(default_factory=list)
 
     def validate(self) -> None:
         require_text(self.title, "title")
@@ -910,6 +942,7 @@ class TopicItem(BaseModel):
         require_dict(self.task_constraints, "task_constraints")
         ensure_list_items_are_text(self.risk_warnings, "risk_warnings")
         ensure_list_items_are_text(self.missing_information, "missing_information")
+        validate_generation_asset_references(self.reference_assets, "reference_assets")
 
 
 @dataclass
@@ -931,6 +964,7 @@ class ContentDraft(BaseModel):
     task_constraints: dict[str, Any] = field(default_factory=dict)
     risk_warnings: list[str] = field(default_factory=list)
     missing_information: list[str] = field(default_factory=list)
+    reference_assets: list[dict[str, Any]] = field(default_factory=list)
     parent_draft_id: str = ""
     revision_focus: str = ""
     diagnosis: dict[str, Any] = field(default_factory=dict)
@@ -956,6 +990,7 @@ class ContentDraft(BaseModel):
         require_dict(self.task_constraints, "task_constraints")
         ensure_list_items_are_text(self.risk_warnings, "risk_warnings")
         ensure_list_items_are_text(self.missing_information, "missing_information")
+        validate_generation_asset_references(self.reference_assets, "reference_assets")
         if not isinstance(self.parent_draft_id, str):
             raise ValidationError("parent_draft_id must be a string")
         if not isinstance(self.revision_focus, str):

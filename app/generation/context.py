@@ -3,7 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.models.core import CreatorProfile, DecisionRequest, ProvenanceRecord, RuleCard, RuleEvidence
+from app.models.core import (
+    ContentAsset,
+    CreatorProfile,
+    DecisionRequest,
+    ProvenanceRecord,
+    RuleCard,
+    RuleEvidence,
+    validate_generation_asset_references,
+)
 from app.rules.selection import select_active_rule_cards
 
 
@@ -22,6 +30,17 @@ EXCLUDED_REASONS = {
     "candidate": ("awaiting_user_confirmation", "尚未经过用户确认"),
     "rejected": ("rejected_by_lifecycle", "该规则已被拒绝"),
     "deprecated": ("deprecated", "该规则已废弃"),
+}
+ASSET_TYPE_LABELS = {
+    "title_pattern": "标题模式",
+    "cover_structure": "封面结构",
+    "opening_template": "开头模板",
+    "body_structure": "正文结构",
+    "cta_template": "行动引导模板",
+    "comparison_framework": "对比框架",
+    "case_framework": "案例框架",
+    "image_text_structure": "图文结构",
+    "topic_framework": "选题框架",
 }
 
 
@@ -92,6 +111,10 @@ class GenerationContext:
     missing_information: list[str]
     user_summary: str
     machine_summary: dict[str, object]
+    reference_assets: list[dict[str, object]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        validate_generation_asset_references(self.reference_assets, "reference_assets")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -100,11 +123,47 @@ class GenerationContext:
             "task_constraints": self.task_constraints,
             "usable_rules": self.usable_rules,
             "excluded_rules": self.excluded_rules,
+            "reference_assets": self.reference_assets,
             "risk_warnings": self.risk_warnings,
             "missing_information": self.missing_information,
             "user_summary": self.user_summary,
             "machine_summary": self.machine_summary,
         }
+
+
+def build_reference_asset_snapshots(reference_assets: list[ContentAsset]) -> list[dict[str, object]]:
+    if len(reference_assets) > 1:
+        raise ValueError("一次生成最多显式引用 1 个 active 内容资产。")
+    return [asset_reference_snapshot(asset) for asset in reference_assets]
+
+
+def asset_reference_snapshot(asset: ContentAsset) -> dict[str, object]:
+    if not isinstance(asset, ContentAsset):
+        raise ValueError("引用资产必须是 ContentAsset。")
+    asset.validate()
+    if asset.status != "active":
+        raise ValueError("只有 active 内容资产可以被显式引用进入生成。")
+    return {
+        "asset_id": asset.id,
+        "asset_version": asset.version,
+        "asset_type": asset.asset_type,
+        "name": asset.name,
+        "description": asset.description,
+        "template": asset.template,
+        "variables": list(asset.variables),
+        "scope": list(asset.applicable_scope),
+        "applicable_scope": list(asset.applicable_scope),
+        "exclusions": list(asset.exclusions),
+        "usage_notes": list(asset.usage_notes),
+        "limitations": list(asset.limitations),
+        "examples": list(asset.examples),
+        "evidence_facts": list(asset.selected_observed_facts),
+        "selected_observed_facts": list(asset.selected_observed_facts),
+        "creator_profile_id": asset.creator_profile_id,
+        "source_mechanism_ids": list(asset.source_mechanism_ids),
+        "account_fit_reason": asset.account_fit_reason,
+        "confidence_level": asset.confidence_level,
+    }
 
 
 def build_generation_context(
@@ -115,6 +174,7 @@ def build_generation_context(
     provenance: list[ProvenanceRecord],
     decisions: list[DecisionRequest],
     task_constraints: GenerationTaskConstraints,
+    reference_assets: list[ContentAsset] | None = None,
 ) -> GenerationContext:
     active_ids = {rule.id for rule in select_active_rule_cards(rules, allow_candidate_ids=[])}
     evidence_by_rule = group_evidence(evidence)
@@ -185,10 +245,13 @@ def build_generation_context(
 
     profile_summary = profile_to_summary(profile)
     constraints = task_constraints.to_dict()
+    asset_references = build_reference_asset_snapshots(reference_assets or [])
     machine_summary = {
         "profile_id": profile.id,
         "profile_version": profile.version,
         "task_constraints": constraints,
+        "reference_asset_ids": [item["asset_id"] for item in asset_references],
+        "reference_assets": asset_references,
         "usable_rule_ids": [item["rule_id"] for item in usable_rules],
         "excluded_rule_ids": [item["rule_id"] for item in excluded_rules],
         "usable_rules": usable_rules,
@@ -202,6 +265,7 @@ def build_generation_context(
         task_constraints=constraints,
         usable_rules=usable_rules,
         excluded_rules=excluded_rules,
+        reference_assets=asset_references,
         risk_warnings=risk_warnings,
         missing_information=missing_information,
         status_category=status_category,
@@ -212,6 +276,7 @@ def build_generation_context(
         task_constraints=constraints,
         usable_rules=usable_rules,
         excluded_rules=excluded_rules,
+        reference_assets=asset_references,
         risk_warnings=risk_warnings,
         missing_information=missing_information,
         user_summary=user_summary,
@@ -225,6 +290,7 @@ def build_generation_context_user_summary(
     task_constraints: dict[str, object],
     usable_rules: list[dict[str, object]],
     excluded_rules: list[dict[str, object]],
+    reference_assets: list[dict[str, object]],
     risk_warnings: list[str],
     missing_information: list[str],
     status_category: str,
@@ -264,6 +330,14 @@ def build_generation_context_user_summary(
             lines.append(f"- {rule['summary']}：{rule['reason']}")
     else:
         lines.append("没有被排除的规则。")
+
+    lines.extend(["", "显式引用资产："])
+    if reference_assets:
+        for asset in reference_assets:
+            label = ASSET_TYPE_LABELS.get(str(asset["asset_type"]), "内容资产")
+            lines.append(f"- {asset['name']}（{label}，第 {asset['asset_version']} 版）")
+    else:
+        lines.append("未显式引用内容资产。")
 
     if profile.forbidden_expressions:
         lines.extend(["", "需要避免："])

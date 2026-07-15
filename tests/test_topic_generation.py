@@ -37,6 +37,21 @@ class TopicGenerationTests(unittest.TestCase):
         self.assertEqual(result.machine_summary["usable_rule_ids"], ["rule-approved"])
         json.dumps(result.machine_summary, ensure_ascii=False)
 
+    def test_explicit_reference_asset_is_carried_into_topics(self) -> None:
+        reference_asset = make_reference_asset()
+        context = make_context(
+            status="ready",
+            usable_rules=[make_rule("rule-approved", "title", "标题点名具体对象")],
+            reference_assets=[reference_asset],
+        )
+
+        result = generate_topics_from_context(context=context, topic_count=1)
+
+        topic = result.topics[0]
+        self.assertEqual(topic.reference_assets, [reference_asset])
+        self.assertEqual(result.machine_summary["reference_asset_ids"], ["asset-opening"])
+        self.assertEqual(result.machine_summary["reference_assets"], [reference_asset])
+
     def test_limited_context_with_usable_rules_generates_topics_and_warning(self) -> None:
         context = make_context(
             status="limited",
@@ -129,6 +144,7 @@ def make_context(
     usable_rules: list[dict[str, object]],
     excluded_rules: list[dict[str, object]] | None = None,
     missing_information: list[str] | None = None,
+    reference_assets: list[dict[str, object]] | None = None,
 ) -> GenerationContext:
     task_constraints = {
         "intent": "准备后续选题",
@@ -155,6 +171,8 @@ def make_context(
         "risk_warnings": ["避免对象过宽。"],
         "missing_information": missing,
         "status_category": status,
+        "reference_asset_ids": [item["asset_id"] for item in reference_assets or []],
+        "reference_assets": reference_assets or [],
     }
     return GenerationContext(
         status_category=status,
@@ -172,6 +190,7 @@ def make_context(
         missing_information=missing,
         user_summary="测试上下文摘要。",
         machine_summary=machine_summary,
+        reference_assets=reference_assets or [],
     )
 
 
@@ -192,6 +211,22 @@ def make_rule(rule_id: str, rule_type: str, summary: str) -> dict[str, object]:
         "decision_basis": "user_confirmed",
         "profile_alignment": "matched",
         "warnings": [],
+    }
+
+
+def make_reference_asset() -> dict[str, object]:
+    return {
+        "asset_id": "asset-opening",
+        "asset_version": 2,
+        "asset_type": "opening_template",
+        "name": "结果优先开场",
+        "template": "先说结果：{{result}}。再说过程：{{process}}。",
+        "variables": ["result", "process"],
+        "applicable_scope": ["AI 内容运营"],
+        "limitations": ["不能夸大收益。"],
+        "selected_observed_facts": ["标题先展示结果承诺，再说明使用的工具和流程"],
+        "source_mechanism_ids": ["mechanism-result-framing"],
+        "confidence_level": "medium",
     }
 
 

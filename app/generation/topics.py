@@ -34,6 +34,7 @@ def generate_topics_from_context(*, context: GenerationContext, topic_count: int
     risk_warnings = text_list(machine_context.get("risk_warnings"))
     missing_information = text_list(machine_context.get("missing_information"))
     reference_ids = text_list(constraints.get("reference_ids"))
+    reference_assets = list_of_dicts(machine_context.get("reference_assets"))
     content_format = first_text(
         [
             string_value(constraints.get("content_format")),
@@ -53,6 +54,7 @@ def generate_topics_from_context(*, context: GenerationContext, topic_count: int
             risk_warnings=risk_warnings,
             missing_information=missing_information,
             reference_ids=reference_ids,
+            reference_assets=reference_assets,
             content_format=content_format,
         )
         for index in range(1, topic_count + 1)
@@ -77,6 +79,8 @@ def generate_topics_from_context(*, context: GenerationContext, topic_count: int
         "topic_count": len(topics),
         "usable_rule_ids": [string_value(item.get("rule_id")) for item in usable_rules if string_value(item.get("rule_id"))],
         "excluded_rule_ids": text_list(machine_context.get("excluded_rule_ids")),
+        "reference_asset_ids": [string_value(item.get("asset_id")) for item in reference_assets if string_value(item.get("asset_id"))],
+        "reference_assets": reference_assets,
         "task_constraints": constraints,
         "risk_warnings": risk_warnings,
         "missing_information": missing_information,
@@ -106,6 +110,7 @@ def build_topic(
     risk_warnings: list[str],
     missing_information: list[str],
     reference_ids: list[str],
+    reference_assets: list[dict[str, object]],
     content_format: str,
 ) -> TopicItem:
     rule = usable_rules[(index - 1) % len(usable_rules)]
@@ -136,6 +141,7 @@ def build_topic(
         task_constraints=constraints,
         risk_warnings=risk_warnings,
         missing_information=missing_information,
+        reference_assets=reference_assets,
         created_by="codex",
     )
 
@@ -149,6 +155,8 @@ def build_user_summary(context: GenerationContext, topics: list[TopicItem], warn
     ]
     if warnings:
         lines.append("限制与风险：" + "；".join(unique_texts(warnings)))
+    if context.reference_assets:
+        lines.append(f"已纳入 {len(context.reference_assets)} 个显式引用资产。")
     lines.append("选题列表：")
     for index, topic in enumerate(topics, start=1):
         lines.append(f"{index}. {topic.title}")
@@ -183,6 +191,12 @@ def int_or_none(value: object) -> int | None:
 
 def dict_value(value: object) -> dict[str, object]:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def list_of_dicts(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
 
 
 def text_list(value: object) -> list[str]:

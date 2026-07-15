@@ -9,17 +9,19 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.generation.context import GenerationTaskConstraints, build_generation_context  # noqa: E402
+from app.generation.context import GenerationContext, GenerationTaskConstraints, asset_reference_snapshot, build_generation_context  # noqa: E402
 from app.models.core import (  # noqa: E402
     BenchmarkAnalysis,
     BenchmarkPost,
     CaptureRecord,
+    ContentAsset,
     ContentMechanism,
     CreatorProfile,
     DecisionRequest,
     ProvenanceRecord,
     RuleCard,
     RuleEvidence,
+    ValidationError,
 )
 from app.repositories import JsonRepository  # noqa: E402
 
@@ -150,6 +152,92 @@ class GenerationContextTests(unittest.TestCase):
             self.assertNotIn("mechanism-ignored", serialized)
             self.assertNotIn("结果前置机制", serialized)
             self.assertEqual(snapshot_workspace(workspace), before)
+
+    def test_explicit_active_asset_enters_context_as_reference_snapshot(self) -> None:
+        profile = self._profile()
+        asset = make_asset("asset-reference", status="active", version=3)
+
+        context = build_generation_context(
+            profile=profile,
+            rules=[make_rule("rule-ready", "approved", "标题点名具体对象", rule_type="title")],
+            evidence=[make_evidence("evidence-ready", "rule-ready", "标题点名职场新人。")],
+            provenance=[make_profile_provenance("provenance-ready", "rule-ready", profile.id, profile.version)],
+            decisions=[make_confirmed_decision("decision-ready", "rule-ready")],
+            task_constraints=GenerationTaskConstraints(),
+            reference_assets=[asset],
+        )
+
+        self.assertEqual(len(context.reference_assets), 1)
+        reference = context.reference_assets[0]
+        self.assertEqual(reference["asset_id"], asset.id)
+        self.assertEqual(reference["asset_version"], 3)
+        self.assertEqual(reference["asset_type"], "opening_template")
+        self.assertEqual(reference["template"], asset.template)
+        self.assertEqual(reference["scope"], asset.applicable_scope)
+        self.assertEqual(reference["source_mechanism_ids"], ["mechanism-result-framing"])
+        self.assertEqual(reference["evidence_facts"], asset.selected_observed_facts)
+        self.assertEqual(reference["selected_observed_facts"], asset.selected_observed_facts)
+        self.assertEqual(context.machine_summary["reference_asset_ids"], [asset.id])
+        self.assertEqual(context.machine_summary["reference_assets"], context.reference_assets)
+        self.assertIn("显式引用资产", context.user_summary)
+
+    def test_reference_assets_require_one_active_asset(self) -> None:
+        profile = self._profile()
+        base_kwargs = {
+            "profile": profile,
+            "rules": [make_rule("rule-ready", "approved", "标题点名具体对象", rule_type="title")],
+            "evidence": [make_evidence("evidence-ready", "rule-ready", "标题点名职场新人。")],
+            "provenance": [make_profile_provenance("provenance-ready", "rule-ready", profile.id, profile.version)],
+            "decisions": [make_confirmed_decision("decision-ready", "rule-ready")],
+            "task_constraints": GenerationTaskConstraints(),
+        }
+
+        for status in ("candidate", "deprecated"):
+            with self.subTest(status=status):
+                with self.assertRaises(ValueError) as caught:
+                    build_generation_context(**base_kwargs, reference_assets=[make_asset("asset-reference", status=status)])
+                self.assertIn("active", str(caught.exception))
+
+        with self.assertRaises(ValueError) as too_many:
+            build_generation_context(
+                **base_kwargs,
+                reference_assets=[
+                    make_asset("asset-one", status="active"),
+                    make_asset("asset-two", status="active"),
+                ],
+            )
+        self.assertIn("最多", str(too_many.exception))
+
+    def test_direct_generation_context_validates_reference_asset_snapshots(self) -> None:
+        first_reference = asset_reference_snapshot(make_asset("asset-direct-one", status="active", version=2))
+        second_reference = asset_reference_snapshot(make_asset("asset-direct-two", status="active", version=1))
+
+        self.assertEqual(make_direct_context().reference_assets, [])
+        self.assertEqual(make_direct_context(reference_assets=[first_reference]).reference_assets, [first_reference])
+        self.assertEqual(
+            make_direct_context(
+                reference_assets=[
+                    {
+                        **first_reference,
+                        "scope": list(first_reference["applicable_scope"]),
+                        "evidence_facts": list(first_reference["selected_observed_facts"]),
+                    }
+                ]
+            ).reference_assets[0]["asset_id"],
+            "asset-direct-one",
+        )
+
+        with self.assertRaises(ValidationError) as too_many:
+            make_direct_context(reference_assets=[first_reference, second_reference])
+        self.assertIn("at most one", str(too_many.exception))
+
+        with self.assertRaises(ValidationError) as scope_error:
+            make_direct_context(reference_assets=[{**first_reference, "scope": ["其他场景"]}])
+        self.assertIn("scope aliases must match", str(scope_error.exception))
+
+        with self.assertRaises(ValidationError) as evidence_error:
+            make_direct_context(reference_assets=[{**first_reference, "evidence_facts": ["其他事实"]}])
+        self.assertIn("evidence aliases must match", str(evidence_error.exception))
 
     def test_excludes_candidate_even_with_confirmed_looking_decision(self) -> None:
         profile = self._profile()
@@ -434,6 +522,45 @@ def make_pending_decision(decision_id: str, rule_id: str) -> DecisionRequest:
         recommendation_reason="测试。",
         impact="测试。",
         status="pending",
+    )
+
+
+def make_direct_context(reference_assets: list[dict[str, object]] | None = None) -> GenerationContext:
+    return GenerationContext(
+        status_category="ready",
+        profile={"profile_id": "creator-main", "profile_version": 1},
+        task_constraints={},
+        usable_rules=[],
+        excluded_rules=[],
+        risk_warnings=[],
+        missing_information=[],
+        user_summary="测试上下文。",
+        machine_summary={"reference_assets": reference_assets or []},
+        reference_assets=reference_assets or [],
+    )
+
+
+def make_asset(asset_id: str, *, status: str = "candidate", version: int = 1) -> ContentAsset:
+    return ContentAsset(
+        id=asset_id,
+        version=version,
+        status=status,
+        asset_type="opening_template",
+        name="结果优先开场",
+        description="先说明用户能得到的结果，再解释过程。",
+        template="先说结果：{{result}}。再说过程：{{process}}。",
+        variables=["result", "process"],
+        applicable_scope=["AI 内容运营"],
+        exclusions=["纯工具介绍"],
+        usage_notes=["填入具体结果和过程。"],
+        limitations=["不能夸大收益。"],
+        examples=["先说 10 分钟完成选题库，再说明步骤。"],
+        creator_profile_id="creator-main",
+        source_mechanism_ids=["mechanism-result-framing"],
+        selected_observed_facts=["标题先展示结果承诺，再说明使用的工具和流程"],
+        account_fit_reason="适合当前账号强调具体结果的表达方式。",
+        confidence_level="medium",
+        confidence=0.6,
     )
 
 
