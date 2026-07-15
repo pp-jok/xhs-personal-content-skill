@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from hashlib import sha1
 from typing import Any
 
-from app.models.core import ContentDraft, TopicItem, ValidationError
+from app.models.core import ContentDraft, TopicItem, ValidationError, validate_generation_asset_references
 
 
 class DraftGenerationError(ValueError):
@@ -162,17 +162,24 @@ def resolve_draft_reference_assets(
     explicit_assets: list[dict[str, object]] | None,
 ) -> list[dict[str, object]]:
     inherited = list(inherited_assets)
+    validate_reference_assets_for_draft(inherited)
     if explicit_assets is None:
         return inherited
     explicit = list(explicit_assets)
-    if len(explicit) > 1:
-        raise DraftGenerationError("一次草稿生成最多显式引用 1 个内容资产。")
+    validate_reference_assets_for_draft(explicit)
     if inherited and explicit:
         inherited_key = asset_reference_key(inherited[0])
         explicit_key = asset_reference_key(explicit[0])
         if inherited_key != explicit_key:
             raise DraftGenerationError("选题已有关联内容资产，不能静默改用另一个资产。")
     return explicit or inherited
+
+
+def validate_reference_assets_for_draft(references: list[dict[str, object]]) -> None:
+    try:
+        validate_generation_asset_references(references, "reference_assets")
+    except ValidationError as exc:
+        raise DraftGenerationError(f"内容资产引用不可用：{exc}") from exc
 
 
 def asset_reference_key(reference: dict[str, object]) -> tuple[str, int | None]:

@@ -11,9 +11,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from app.generation.drafts import (  # noqa: E402
     DraftGenerationError,
     generate_draft_from_topic,
+    resolve_draft_reference_assets,
     revise_draft_with_focus,
 )
-from app.models.core import ContentDraft, TopicItem  # noqa: E402
+from app.models.core import ContentDraft, TopicItem, ValidationError  # noqa: E402
 
 
 class DraftGenerationTests(unittest.TestCase):
@@ -74,6 +75,73 @@ class DraftGenerationTests(unittest.TestCase):
 
         self.assertEqual(result.draft.reference_assets, [asset_reference])
         self.assertEqual(topic.to_dict(), before)
+
+    def test_generation_records_accept_zero_or_one_reference_asset(self) -> None:
+        empty_topic = make_topic()
+        single_topic = make_topic(reference_assets=[make_reference_asset("asset-opening", 2)])
+        empty_draft = make_draft()
+        single_draft = ContentDraft.from_dict(
+            {
+                **make_draft().to_dict(),
+                "id": "draft-single-reference",
+                "reference_assets": [make_reference_asset("asset-opening", 2)],
+            }
+        )
+
+        self.assertEqual(empty_topic.reference_assets, [])
+        self.assertEqual(len(single_topic.reference_assets), 1)
+        self.assertEqual(empty_draft.reference_assets, [])
+        self.assertEqual(len(single_draft.reference_assets), 1)
+
+    def test_generation_records_reject_multiple_reference_assets(self) -> None:
+        references = [make_reference_asset("asset-opening", 2), make_reference_asset("asset-cover", 1)]
+
+        with self.assertRaises(ValidationError) as topic_error:
+            make_topic(reference_assets=references)
+        with self.assertRaises(ValidationError) as draft_error:
+            ContentDraft.from_dict({**make_draft().to_dict(), "id": "draft-two-references", "reference_assets": references})
+
+        self.assertIn("at most one", str(topic_error.exception))
+        self.assertIn("at most one", str(draft_error.exception))
+        self.assertNotIn("asset-opening", str(topic_error.exception))
+        self.assertNotIn("asset-cover", str(draft_error.exception))
+
+    def test_reference_asset_aliases_must_match(self) -> None:
+        valid_reference = make_reference_asset("asset-opening", 2)
+        reference_with_scope = {**valid_reference, "scope": list(valid_reference["applicable_scope"])}
+        reference_with_evidence = {
+            **valid_reference,
+            "evidence_facts": list(valid_reference["selected_observed_facts"]),
+        }
+
+        self.assertEqual(make_topic(reference_assets=[reference_with_scope]).reference_assets[0]["scope"], ["AI 内容运营"])
+        self.assertEqual(
+            make_topic(reference_assets=[reference_with_evidence]).reference_assets[0]["evidence_facts"],
+            ["标题先展示结果承诺，再说明使用的工具和流程"],
+        )
+
+        mismatched_scope = {**valid_reference, "scope": ["其他场景"]}
+        mismatched_evidence = {**valid_reference, "evidence_facts": ["其他事实"]}
+        with self.assertRaises(ValidationError) as scope_error:
+            make_topic(reference_assets=[mismatched_scope])
+        with self.assertRaises(ValidationError) as evidence_error:
+            ContentDraft.from_dict(
+                {**make_draft().to_dict(), "id": "draft-evidence-mismatch", "reference_assets": [mismatched_evidence]}
+            )
+
+        self.assertIn("scope aliases must match", str(scope_error.exception))
+        self.assertIn("evidence aliases must match", str(evidence_error.exception))
+
+    def test_draft_rejects_multiple_inherited_reference_assets(self) -> None:
+        references = [make_reference_asset("asset-opening", 2), make_reference_asset("asset-cover", 1)]
+
+        with self.assertRaises(DraftGenerationError) as inherited_error:
+            resolve_draft_reference_assets(references, None)
+        with self.assertRaises(DraftGenerationError) as explicit_error:
+            resolve_draft_reference_assets(references, [make_reference_asset("asset-opening", 2)])
+
+        self.assertIn("at most one", str(inherited_error.exception))
+        self.assertIn("at most one", str(explicit_error.exception))
 
     def test_invalid_topic_data_fails_clearly(self) -> None:
         with self.assertRaises(DraftGenerationError) as caught:

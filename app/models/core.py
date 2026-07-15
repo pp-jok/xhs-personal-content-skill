@@ -177,6 +177,8 @@ def ensure_non_empty_unique_texts(value: list[Any], field_name: str, require_one
 
 def validate_generation_asset_references(value: list[Any], field_name: str) -> None:
     require_list(value, field_name)
+    if len(value) > 1:
+        raise ValidationError(f"{field_name} must contain at most one item")
     for index, item in enumerate(value):
         item_name = f"{field_name}[{index}]"
         require_dict(item, item_name)
@@ -191,10 +193,14 @@ def validate_generation_asset_references(value: list[Any], field_name: str) -> N
         ensure_list_items_are_text(item.get("applicable_scope"), f"{item_name}.applicable_scope")
         if "scope" in item:
             ensure_list_items_are_text(item["scope"], f"{item_name}.scope")
+            if item["scope"] != item["applicable_scope"]:
+                raise ValidationError(f"{item_name} scope aliases must match")
         ensure_list_items_are_text(item.get("limitations"), f"{item_name}.limitations")
         ensure_list_items_are_text(item.get("selected_observed_facts"), f"{item_name}.selected_observed_facts")
         if "evidence_facts" in item:
             ensure_list_items_are_text(item["evidence_facts"], f"{item_name}.evidence_facts")
+            if item["evidence_facts"] != item["selected_observed_facts"]:
+                raise ValidationError(f"{item_name} evidence aliases must match")
         ensure_list_items_are_text(item.get("source_mechanism_ids"), f"{item_name}.source_mechanism_ids")
         if "confidence_level" in item:
             require_literal(item["confidence_level"], ContentMechanismConfidenceLevel, f"{item_name}.confidence_level")

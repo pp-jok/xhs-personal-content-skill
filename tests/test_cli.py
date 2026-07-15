@@ -2164,6 +2164,53 @@ class CliTests(unittest.TestCase):
             self.assertIn("资产", output["error"])
             self.assertEqual(JsonRepository(data_dir, ContentDraft).list_all(), [])
 
+    def test_generate_draft_rejects_inherited_multi_asset_topic_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            self._seed_data(data_dir)
+            asset_one = self._seed_content_asset(data_dir, "asset-inherited-one", status="active", version=2)
+            asset_two = self._seed_content_asset(data_dir, "asset-inherited-two", status="active", version=1)
+            topic_data = {
+                "id": "topic-invalid-multi-asset",
+                "title": "新人入职前三天如何快速进入状态",
+                "content_goal": "帮助刚入职的新人明确前三天行动",
+                "content_format": "清单",
+                "source_rule_cards": ["rule-a", "rule-b"],
+                "reference_posts": ["benchmark-post-001"],
+                "reason": "基于账号定位和已确认规则。",
+                "status": "idea",
+                "tags": ["新人入职", "图文"],
+                "source_profile_id": "creator-main",
+                "source_profile_version": 2,
+                "generation_context_status": "limited",
+                "task_constraints": {"topic_area": "新人入职", "content_type": "图文"},
+                "risk_warnings": ["规则缺少独立证据记录"],
+                "missing_information": ["规则缺少独立证据记录"],
+                "reference_assets": [asset_reference_snapshot(asset_one), asset_reference_snapshot(asset_two)],
+                "created_by": "codex",
+            }
+            topic_path = data_dir / TopicItem.collection_name / f"{topic_data['id']}.json"
+            topic_path.parent.mkdir(parents=True, exist_ok=True)
+            topic_path.write_text(json.dumps(topic_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            before_topic = topic_path.read_text(encoding="utf-8")
+            before_assets = {
+                asset_one.id: JsonRepository(data_dir, ContentAsset).read(asset_one.id).to_dict(),
+                asset_two.id: JsonRepository(data_dir, ContentAsset).read(asset_two.id).to_dict(),
+            }
+
+            output = self._run_cli(
+                ["generate-draft", "--workspace", temp_dir, "--topic-id", "topic-invalid-multi-asset"],
+                expected_code=1,
+            )
+
+            self.assertIn("at most one", output["error"])
+            self.assertNotIn("Traceback", output["error"])
+            self.assertNotIn(temp_dir, output["error"])
+            self.assertEqual(JsonRepository(data_dir, ContentDraft).list_all(), [])
+            self.assertEqual(topic_path.read_text(encoding="utf-8"), before_topic)
+            self.assertEqual(JsonRepository(data_dir, ContentAsset).read(asset_one.id).to_dict(), before_assets[asset_one.id])
+            self.assertEqual(JsonRepository(data_dir, ContentAsset).read(asset_two.id).to_dict(), before_assets[asset_two.id])
+
     def test_generate_draft_allows_same_explicit_and_inherited_asset(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir)
