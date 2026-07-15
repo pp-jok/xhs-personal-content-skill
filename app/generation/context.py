@@ -3,7 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.models.core import ContentAsset, CreatorProfile, DecisionRequest, ProvenanceRecord, RuleCard, RuleEvidence
+from app.models.core import (
+    ContentAsset,
+    CreatorProfile,
+    DecisionRequest,
+    ProvenanceRecord,
+    RuleCard,
+    RuleEvidence,
+    validate_generation_asset_references,
+)
 from app.rules.selection import select_active_rule_cards
 
 
@@ -104,6 +112,9 @@ class GenerationContext:
     user_summary: str
     machine_summary: dict[str, object]
     reference_assets: list[dict[str, object]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        validate_generation_asset_references(self.reference_assets, "reference_assets")
 
     def to_dict(self) -> dict[str, object]:
         return {

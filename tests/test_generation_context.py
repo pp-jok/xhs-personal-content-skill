@@ -9,7 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.generation.context import GenerationTaskConstraints, build_generation_context  # noqa: E402
+from app.generation.context import GenerationContext, GenerationTaskConstraints, asset_reference_snapshot, build_generation_context  # noqa: E402
 from app.models.core import (  # noqa: E402
     BenchmarkAnalysis,
     BenchmarkPost,
@@ -21,6 +21,7 @@ from app.models.core import (  # noqa: E402
     ProvenanceRecord,
     RuleCard,
     RuleEvidence,
+    ValidationError,
 )
 from app.repositories import JsonRepository  # noqa: E402
 
@@ -206,6 +207,37 @@ class GenerationContextTests(unittest.TestCase):
                 ],
             )
         self.assertIn("最多", str(too_many.exception))
+
+    def test_direct_generation_context_validates_reference_asset_snapshots(self) -> None:
+        first_reference = asset_reference_snapshot(make_asset("asset-direct-one", status="active", version=2))
+        second_reference = asset_reference_snapshot(make_asset("asset-direct-two", status="active", version=1))
+
+        self.assertEqual(make_direct_context().reference_assets, [])
+        self.assertEqual(make_direct_context(reference_assets=[first_reference]).reference_assets, [first_reference])
+        self.assertEqual(
+            make_direct_context(
+                reference_assets=[
+                    {
+                        **first_reference,
+                        "scope": list(first_reference["applicable_scope"]),
+                        "evidence_facts": list(first_reference["selected_observed_facts"]),
+                    }
+                ]
+            ).reference_assets[0]["asset_id"],
+            "asset-direct-one",
+        )
+
+        with self.assertRaises(ValidationError) as too_many:
+            make_direct_context(reference_assets=[first_reference, second_reference])
+        self.assertIn("at most one", str(too_many.exception))
+
+        with self.assertRaises(ValidationError) as scope_error:
+            make_direct_context(reference_assets=[{**first_reference, "scope": ["其他场景"]}])
+        self.assertIn("scope aliases must match", str(scope_error.exception))
+
+        with self.assertRaises(ValidationError) as evidence_error:
+            make_direct_context(reference_assets=[{**first_reference, "evidence_facts": ["其他事实"]}])
+        self.assertIn("evidence aliases must match", str(evidence_error.exception))
 
     def test_excludes_candidate_even_with_confirmed_looking_decision(self) -> None:
         profile = self._profile()
@@ -490,6 +522,21 @@ def make_pending_decision(decision_id: str, rule_id: str) -> DecisionRequest:
         recommendation_reason="测试。",
         impact="测试。",
         status="pending",
+    )
+
+
+def make_direct_context(reference_assets: list[dict[str, object]] | None = None) -> GenerationContext:
+    return GenerationContext(
+        status_category="ready",
+        profile={"profile_id": "creator-main", "profile_version": 1},
+        task_constraints={},
+        usable_rules=[],
+        excluded_rules=[],
+        risk_warnings=[],
+        missing_information=[],
+        user_summary="测试上下文。",
+        machine_summary={"reference_assets": reference_assets or []},
+        reference_assets=reference_assets or [],
     )
 
 
